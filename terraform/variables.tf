@@ -1,5 +1,6 @@
 # terraform/variables.tf
 
+# Sensitive variables (must come from environment)
 variable "vultr_api_key" {
   description = "Vultr API Key for authentication"
   type        = string
@@ -12,6 +13,7 @@ variable "ssh_public_key" {
   sensitive   = true
 }
 
+# Non-sensitive server configuration
 variable "server_plan" {
   description = "Vultr server plan type"
   type        = string
@@ -19,7 +21,7 @@ variable "server_plan" {
 }
 
 variable "hostname" {
-  description = "Hostname for the server"
+  description = "Server hostname"
   type        = string
   default     = "cucho.phalkons.com"
 }

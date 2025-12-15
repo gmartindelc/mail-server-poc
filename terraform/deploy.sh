@@ -10,47 +10,71 @@ if [ ! -f "main.tf" ]; then
     exit 1
 fi
 
-# Check if initialized
-if [ ! -d ".terraform" ]; then
-    echo "Error: Terraform not initialized. Run ./init.sh first."
+# Check for required files
+if [ ! -f "terraform.tfvars" ]; then
+    echo "Error: terraform.tfvars not found!"
     exit 1
 fi
 
-# Create plan
-echo "Creating deployment plan..."
-terraform plan -out=tfplan
+# Load credentials from .env
+ENV_FILE="../.env"
+if [ -f "$ENV_FILE" ]; then
+    VULTR_API_KEY=$(grep ^VULTR_API_KEY= "$ENV_FILE" | cut -d= -f2- | tr -d '"'"'")
+    VULTR_SSH_PUBLIC_KEY=$(grep ^VULTR_SSH_PUBLIC_KEY= "$ENV_FILE" | cut -d= -f2- | tr -d '"'"'")
+else
+    echo "Error: .env file not found!"
+    exit 1
+fi
 
+# Validate credentials
+if [ -z "$VULTR_API_KEY" ] || [ -z "$VULTR_SSH_PUBLIC_KEY" ]; then
+    echo "Error: Missing credentials in .env file"
+    exit 1
+fi
+
+echo "Deployment Configuration:"
+echo "-------------------------"
+echo "Server specs (from terraform.tfvars):"
+cat terraform.tfvars
 echo ""
-read -p "Do you want to apply this plan? (yes/no): " confirm
+echo "Credentials: [loaded from .env]"
+echo ""
 
+# Read server specs from terraform.tfvars for display
+SERVER_PLAN=$(grep ^server_plan= terraform.tfvars | cut -d= -f2- | tr -d ' "')
+HOSTNAME=$(grep ^hostname= terraform.tfvars | cut -d= -f2- | tr -d ' "')
+REGION=$(grep ^region= terraform.tfvars | cut -d= -f2- | tr -d ' "')
+
+echo "Creating instance:"
+echo "  Plan: $SERVER_PLAN"
+echo "  Hostname: $HOSTNAME"
+echo "  Region: $REGION"
+echo ""
+
+read -p "Proceed with deployment? (yes/no): " confirm
 if [ "$confirm" != "yes" ]; then
     echo "Deployment cancelled."
-    echo "You can review the plan with: terraform show tfplan"
     exit 0
 fi
 
-# Apply the plan
+# Apply Terraform configuration
 echo ""
 echo "Applying Terraform configuration..."
-terraform apply tfplan
+terraform apply -auto-approve \
+  -var-file="terraform.tfvars" \
+  -var="vultr_api_key=$VULTR_API_KEY" \
+  -var="ssh_public_key=$VULTR_SSH_PUBLIC_KEY"
 
-# Clean up plan file
-rm -f tfplan
-
 echo ""
-echo "=== Deployment Complete ==="
+echo "=============================================================="
+echo "✅  DEPLOYMENT COMPLETE"
+echo "=============================================================="
 echo ""
-echo "Important: Check your email for the root password from Vultr!"
+echo "Instance details saved to:"
+echo "- ../instance_outputs.json"
+echo "- ../connection_info.txt"
+echo "- ../quick_reference.md"
 echo ""
-echo "Files created:"
-echo "- ../instance_outputs.json (machine-readable)"
-echo "- ../connection_info.txt (human-readable)"
+echo "To view outputs: terraform output"
 echo ""
-echo "Next steps:"
-echo "1. Check email for Vultr welcome message with root password"
-echo "2. SSH into server: ssh root@[IP_ADDRESS]"
-echo "3. Change root password immediately"
-echo "4. Proceed with Ansible configuration"
-echo ""
-echo "To destroy the infrastructure:"
-echo "terraform destroy"
+echo "=============================================================="
