@@ -1,0 +1,14 @@
+# terraform/terraform.tfvars.example
+# Copy this file to terraform.tfvars and fill in your values
+# DO NOT commit terraform.tfvars to version control
+
+vultr_api_key  = "YOUR_VULTR_API_KEY_HERE"
+ssh_public_key = "ssh-rsa AAAAB3NzaC1yc2E...your_public_key_here"
+
+# Optional overrides (defaults shown below)
+# server_plan = "vc2-2c-4gb"
+# hostname    = "cucho.phalkons.com"
+# region      = "Dallas"
+# os_name     = "Debian 13 x64 (Bookworm)"
+# label       = "mail-server-poc"
+# tags        = ["mail-server", "poc", "production", "terraform-managed"]
