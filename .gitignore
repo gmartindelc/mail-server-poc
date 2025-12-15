@@ -1,0 +1,84 @@
+############################
+# Terraform
+############################
+
+# Local .terraform directories
+.terraform/
+**/.terraform/*
+
+# Terraform state files
+*.tfstate
+*.tfstate.*
+
+# Crash logs
+crash.log
+crash.*.log
+
+# Terraform variable files that may contain secrets
+*.tfvars
+*.tfvars.json
+
+# Terraform CLI configuration
+.terraformrc
+terraform.rc
+
+# Terraform lock file (KEEP if you want deterministic providers)
+# Uncomment the next line only if you intentionally do NOT want it in git
+# .terraform.lock.hcl
+
+############################
+# Ansible
+############################
+
+# Retry files
+*.retry
+
+# Vault password files
+.vault_pass
+.vault-password
+.vault_pass.txt
+
+# Ansible facts cache
+*.fact
+ansible_facts*
+.fact_cache/
+.cache/
+
+# Temporary files
+/tmp/
+*.log
+
+# Inventory files with secrets (keep templates instead)
+inventory/*
+!inventory/*.example
+!inventory/*.yml
+!inventory/*.yaml
+
+# Ansible collections installed locally
+collections/
+!collections/requirements.yml
+
+# Roles downloaded via ansible-galaxy
+roles/
+!roles/requirements.yml
+
+############################
+# Python (common for Ansible tooling)
+############################
+
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.env
+
+############################
+# Editors / OS
+############################
+
+.vscode/
+.idea/
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
