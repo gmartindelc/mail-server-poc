@@ -18,6 +18,10 @@ crash.*.log
 *.tfvars
 *.tfvars.json
 
+# BUT keep examples
+!*.tfvars.example
+!*.tfvars.json.example
+
 # Terraform CLI configuration
 .terraformrc
 terraform.rc
@@ -71,6 +75,7 @@ __pycache__/
 .venv/
 venv/
 .env
+!.env.example
 
 ############################
 # Editors / OS
