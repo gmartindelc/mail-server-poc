@@ -1,0 +1,67 @@
+# ansible/playbooks/create_admin_user.yml
+---
+- name: Create administrative user with sudo privileges
+  hosts: all
+  become: true
+  gather_facts: true
+  
+  vars:
+    admin_user: "{{ admin_username | default('adminuser') }}"
+    admin_fullname: "{{ admin_fullname | default('System Administrator') }}"
+    admin_groups: "{{ admin_groups | default(['sudo']) }}"
+    generate_password: "{{ generate_temp_password | default(true) }}"
+    temp_password: "{{ lookup('password', '/dev/null length=12 chars=ascii_letters,digits') if generate_password else '' }}"
+    credential_file: "{{ credential_output_file | default('./credentials.secret') }}"
+  
+  tasks:
+    - name: Create admin user
+      ansible.builtin.user:
+        name: "{{ admin_user }}"
+        comment: "{{ admin_fullname }}"
+        shell: /bin/bash
+        create_home: yes
+        home: "/home/{{ admin_user }}"
+        groups: "{{ admin_groups | join(',') }}"
+        append: yes
+      tags:
+        - user-management
+    
+    - name: Set password for admin user (if generated)
+      ansible.builtin.user:
+        name: "{{ admin_user }}"
+        password: "{{ temp_password | password_hash('sha512') }}"
+        update_password: always
+      when: generate_password
+      tags:
+        - password
+    
+    - name: Append credentials to file (if password generated)
+      ansible.builtin.lineinfile:
+        path: "{{ credential_file }}"
+        line: "{{ admin_user }},{{ temp_password }}"
+        create: yes
+        mode: '0600'
+      when: generate_password
+      delegate_to: localhost
+      tags:
+        - credentials
+    
+    - name: Display credential information (if password generated)
+      ansible.builtin.debug:
+        msg: |
+          User created: {{ admin_user }}
+          Full name: {{ admin_fullname }}
+          Temporary password: {{ temp_password }}
+          Groups: {{ admin_groups | join(', ') }}
+          Credentials saved to: {{ credential_file }}
+      when: generate_password
+      tags:
+        - info
+    
+    - name: Verify user creation
+      ansible.builtin.command:
+        cmd: "id {{ admin_user }}"
+      register: user_verify
+      changed_when: false
+      tags:
+        - verification

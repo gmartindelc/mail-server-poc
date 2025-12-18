@@ -1,0 +1,39 @@
+# ansible/playbooks/remove_user.yml
+---
+- name: Remove system user completely
+  hosts: all
+  become: true
+  gather_facts: true
+  
+  vars:
+    user_to_remove: "{{ user_name | default('linuxuser') }}"
+  
+  tasks:
+    - name: Check if user exists
+      ansible.builtin.command:
+        cmd: "id {{ user_to_remove }}"
+      register: user_check
+      ignore_errors: true
+      changed_when: false
+      tags:
+        - user-management
+    
+    - name: Remove user if exists
+      ansible.builtin.user:
+        name: "{{ user_to_remove }}"
+        state: absent
+        remove: true
+        force: true
+      when: user_check.rc == 0
+      tags:
+        - user-management
+    
+    - name: Verify user removal
+      ansible.builtin.command:
+        cmd: "id {{ user_to_remove }}"
+      register: removal_check
+      ignore_errors: true
+      changed_when: false
+      failed_when: false
+      tags:
+        - verification

@@ -1,0 +1,19 @@
+# ansible/playbooks/task_1.2.3.yml
+---
+- name: Task 1.2.3 - Create phalkonadmin user
+  hosts: mail_server
+  gather_facts: true
+  
+  vars:
+    admin_username: "phalkonadmin"
+    admin_fullname: "Phalkon Administrator"
+    admin_groups:
+      - sudo
+    credential_output_file: "../../cucho1.phalkons.com.secret"
+  
+  tasks:
+    - name: Include create_admin_user playbook
+      ansible.builtin.include_playbook:
+        name: create_admin_user.yml
+      tags:
+        - task-1.2.3

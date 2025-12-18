@@ -1,0 +1,64 @@
+# ansible/playbooks/setup_ssh_key_auth.yml
+---
+- name: Configure SSH key authentication for user
+  hosts: all
+  become: true
+  gather_facts: true
+  
+  vars:
+    target_user: "{{ ssh_user | default('adminuser') }}"
+    ssh_key: "{{ ssh_public_key | default('~/.ssh/id_rsa.pub') }}"
+    disable_password_auth: "{{ disable_ssh_password | default(true) }}"
+  
+  tasks:
+    - name: Create .ssh directory for user
+      ansible.builtin.file:
+        path: "/home/{{ target_user }}/.ssh"
+        state: directory
+        owner: "{{ target_user }}"
+        group: "{{ target_user }}"
+        mode: '0700'
+      tags:
+        - ssh
+        - setup
+    
+    - name: Deploy SSH public key
+      ansible.builtin.copy:
+        src: "{{ ssh_key }}"
+        dest: "/home/{{ target_user }}/.ssh/authorized_keys"
+        owner: "{{ target_user }}"
+        group: "{{ target_user }}"
+        mode: '0600'
+      tags:
+        - ssh
+        - keys
+    
+    - name: Disable password authentication in SSH (optional)
+      ansible.builtin.lineinfile:
+        path: /etc/ssh/sshd_config
+        regexp: '^#?PasswordAuthentication'
+        line: 'PasswordAuthentication no'
+      when: disable_password_auth
+      notify: restart sshd
+      tags:
+        - ssh
+        - security
+    
+    - name: Disable root SSH login (optional)
+      ansible.builtin.lineinfile:
+        path: /etc/ssh/sshd_config
+        regexp: '^#?PermitRootLogin'
+        line: 'PermitRootLogin no'
+      when: disable_password_auth
+      notify: restart sshd
+      tags:
+        - ssh
+        - security
+  
+  handlers:
+    - name: restart sshd
+      ansible.builtin.service:
+        name: sshd
+        state: restarted
+      tags:
+        - ssh

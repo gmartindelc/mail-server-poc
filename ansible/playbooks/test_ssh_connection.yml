@@ -1,0 +1,25 @@
+# ansible/playbooks/test_ssh_connection.yml
+---
+- name: Test SSH key-based authentication
+  hosts: localhost
+  gather_facts: false
+  
+  vars:
+    test_user: "{{ ssh_test_user | default('adminuser') }}"
+    test_host: "{{ ssh_test_host }}"
+    ssh_key: "{{ ssh_test_key | default('~/.ssh/id_rsa') }}"
+  
+  tasks:
+    - name: Test SSH connection with key
+      ansible.builtin.command:
+        cmd: "ssh -i {{ ssh_key }} -o BatchMode=yes -o ConnectTimeout=5 {{ test_user }}@{{ test_host }} echo 'SSH key authentication successful'"
+      register: ssh_test
+      ignore_errors: true
+      tags:
+        - ssh-test
+    
+    - name: Display test result
+      ansible.builtin.debug:
+        msg: "{{ 'SSH key authentication successful' if ssh_test.rc == 0 else 'SSH key authentication failed' }}"
+      tags:
+        - ssh-test

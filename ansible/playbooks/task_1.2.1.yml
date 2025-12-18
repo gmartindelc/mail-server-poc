@@ -1,0 +1,12 @@
+# ansible/playbooks/task_1.2.1.yml
+---
+- name: Task 1.2.1 - Configure passwordless sudo for sudo group
+  hosts: mail_server
+  gather_facts: false
+  
+  tasks:
+    - name: Include modify_sudoers_nopasswd playbook
+      ansible.builtin.include_playbook:
+        name: modify_sudoers_nopasswd.yml
+      tags:
+        - task-1.2.1

@@ -1,0 +1,30 @@
+# ansible/playbooks/modify_sudoers_nopasswd.yml
+---
+- name: Configure passwordless sudo for sudo group
+  hosts: all
+  become: true
+  gather_facts: false
+  
+  tasks:
+    - name: Create sudoers configuration for passwordless sudo
+      ansible.builtin.copy:
+        dest: /etc/sudoers.d/90-nopasswd-sudo
+        content: |
+          # Allow members of group sudo to execute any command without password
+          # Created by Ansible
+          # Date: {{ ansible_date_time.iso8601 }}
+          %sudo ALL=(ALL:ALL) NOPASSWD: ALL
+        owner: root
+        group: root
+        mode: '0440'
+        validate: '/usr/sbin/visudo -cf %s'
+      tags:
+        - sudoers
+        - nopasswd
+    
+    - name: Verify sudoers configuration syntax
+      ansible.builtin.command:
+        cmd: /usr/sbin/visudo -c
+      changed_when: false
+      tags:
+        - verification

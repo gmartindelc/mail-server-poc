@@ -1,0 +1,15 @@
+# ansible/playbooks/task_1.2.2.yml
+---
+- name: Task 1.2.2 - Remove default linuxuser
+  hosts: mail_server
+  gather_facts: true
+  
+  vars:
+    user_name: "linuxuser"
+  
+  tasks:
+    - name: Include remove_user playbook
+      ansible.builtin.include_playbook:
+        name: remove_user.yml
+      tags:
+        - task-1.2.2
