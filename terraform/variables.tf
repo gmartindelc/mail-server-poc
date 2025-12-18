@@ -1,51 +1,55 @@
-# terraform/variables.tf
-
-# Sensitive variables (must come from environment)
 variable "vultr_api_key" {
-  description = "Vultr API Key for authentication"
+  description = "Vultr API key"
   type        = string
   sensitive   = true
 }
 
-variable "ssh_public_key" {
-  description = "SSH public key for instance authentication"
+variable "ssh_key_name" {
+  description = "Name of the existing SSH key in Vultr account"
   type        = string
-  sensitive   = true
 }
 
-# Non-sensitive server configuration
-variable "server_plan" {
-  description = "Vultr server plan type"
+variable "plan_id" {
+  description = "Plan ID for the VPS (e.g., vc2-1c-1gb, vc2-2c-4gb)"
   type        = string
   default     = "vc2-2c-4gb"
 }
 
+variable "region_id" {
+  description = "Region ID where the VPS will be created (e.g., ewr for New Jersey)"
+  type        = string
+}
+
+variable "os_id" {
+  description = "Operating System ID (e.g., 387 for Ubuntu 22.04, 1743 for Ubuntu 24.04)"
+  type        = number
+}
+
 variable "hostname" {
-  description = "Server hostname"
+  description = "Hostname for the VPS"
   type        = string
-  default     = "cucho.phalkons.com"
-}
-
-variable "region" {
-  description = "Geographic region for deployment"
-  type        = string
-  default     = "Dallas"
-}
-
-variable "os_name" {
-  description = "Operating system name and version"
-  type        = string
-  default     = "Debian 13 x64 (Bookworm)"
 }
 
 variable "label" {
-  description = "Label for the instance"
+  description = "Label for the VPS in Vultr dashboard"
   type        = string
-  default     = "mail-server-poc"
 }
 
 variable "tags" {
-  description = "Tags for resource organization"
+  description = "Tags for the VPS"
   type        = list(string)
-  default     = ["mail-server", "poc", "production", "terraform-managed"]
+  default     = []
+}
+
+variable "enable_backups" {
+  description = "Enable automatic backups"
+  type        = bool
+  default     = true
+}
+
+# Future: For multiple instance creation
+variable "instance_count" {
+  description = "Number of instances to create (for future use)"
+  type        = number
+  default     = 1
 }

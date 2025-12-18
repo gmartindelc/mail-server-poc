@@ -1,0 +1,117 @@
+{
+  "us_regions": [
+    {
+      "id": "atl",
+      "city": "Atlanta",
+      "country": "US",
+      "continent": "North America",
+      "options": [
+        "ddos_protection",
+        "block_storage_storage_opt",
+        "block_storage_high_perf",
+        "load_balancers",
+        "kubernetes"
+      ]
+    },
+    {
+      "id": "dfw",
+      "city": "Dallas",
+      "country": "US",
+      "continent": "North America",
+      "options": [
+        "ddos_protection",
+        "block_storage_storage_opt",
+        "load_balancers",
+        "kubernetes"
+      ]
+    },
+    {
+      "id": "ewr",
+      "city": "New Jersey",
+      "country": "US",
+      "continent": "North America",
+      "options": [
+        "ddos_protection",
+        "block_storage_high_perf",
+        "block_storage_storage_opt",
+        "load_balancers",
+        "kubernetes"
+      ]
+    },
+    {
+      "id": "hnl",
+      "city": "Honolulu",
+      "country": "US",
+      "continent": "North America",
+      "options": [
+        "ddos_protection",
+        "block_storage_storage_opt",
+        "load_balancers",
+        "kubernetes"
+      ]
+    },
+    {
+      "id": "lax",
+      "city": "Los Angeles",
+      "country": "US",
+      "continent": "North America",
+      "options": [
+        "ddos_protection",
+        "block_storage_storage_opt",
+        "block_storage_high_perf",
+        "load_balancers",
+        "kubernetes"
+      ]
+    },
+    {
+      "id": "mia",
+      "city": "Miami",
+      "country": "US",
+      "continent": "North America",
+      "options": [
+        "ddos_protection",
+        "block_storage_storage_opt",
+        "load_balancers",
+        "kubernetes"
+      ]
+    },
+    {
+      "id": "ord",
+      "city": "Chicago",
+      "country": "US",
+      "continent": "North America",
+      "options": [
+        "ddos_protection",
+        "block_storage_storage_opt",
+        "block_storage_high_perf",
+        "load_balancers",
+        "kubernetes"
+      ]
+    },
+    {
+      "id": "sea",
+      "city": "Seattle",
+      "country": "US",
+      "continent": "North America",
+      "options": [
+        "ddos_protection",
+        "block_storage_storage_opt",
+        "block_storage_high_perf",
+        "load_balancers",
+        "kubernetes"
+      ]
+    },
+    {
+      "id": "sjc",
+      "city": "Silicon Valley",
+      "country": "US",
+      "continent": "North America",
+      "options": [
+        "ddos_protection",
+        "block_storage_storage_opt",
+        "load_balancers",
+        "kubernetes"
+      ]
+    }
+  ]
+}

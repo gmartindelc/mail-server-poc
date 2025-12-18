@@ -1,0 +1,10 @@
+city,continent,country,id,options
+Atlanta,North America,US,atl,"['ddos_protection', 'block_storage_storage_opt', 'block_storage_high_perf', 'load_balancers', 'kubernetes']"
+Dallas,North America,US,dfw,"['ddos_protection', 'block_storage_storage_opt', 'load_balancers', 'kubernetes']"
+New Jersey,North America,US,ewr,"['ddos_protection', 'block_storage_high_perf', 'block_storage_storage_opt', 'load_balancers', 'kubernetes']"
+Honolulu,North America,US,hnl,"['ddos_protection', 'block_storage_storage_opt', 'load_balancers', 'kubernetes']"
+Los Angeles,North America,US,lax,"['ddos_protection', 'block_storage_storage_opt', 'block_storage_high_perf', 'load_balancers', 'kubernetes']"
+Miami,North America,US,mia,"['ddos_protection', 'block_storage_storage_opt', 'load_balancers', 'kubernetes']"
+Chicago,North America,US,ord,"['ddos_protection', 'block_storage_storage_opt', 'block_storage_high_perf', 'load_balancers', 'kubernetes']"
+Seattle,North America,US,sea,"['ddos_protection', 'block_storage_storage_opt', 'block_storage_high_perf', 'load_balancers', 'kubernetes']"
+Silicon Valley,North America,US,sjc,"['ddos_protection', 'block_storage_storage_opt', 'load_balancers', 'kubernetes']"

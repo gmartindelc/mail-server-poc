@@ -1,73 +1,39 @@
-# terraform/main.tf
-
 terraform {
+  required_version = ">= 1.0"
   required_providers {
     vultr = {
       source  = "vultr/vultr"
       version = "~> 2.0"
     }
   }
-  required_version = ">= 1.0"
 }
 
-provider "vultr" {
-  api_key = var.vultr_api_key
-}
-
-# Get available OS images
-data "vultr_os" "debian" {
+# Data source to fetch the existing SSH key
+data "vultr_ssh_key" "existing" {
   filter {
     name   = "name"
-    values = [var.os_name]
+    values = [var.ssh_key_name]
   }
-}
-
-# Get available plans
-data "vultr_plan" "server_plan" {
-  filter {
-    name   = "name"
-    values = [var.server_plan]
-  }
-}
-
-# Get available regions
-data "vultr_region" "server_region" {
-  filter {
-    name   = "city"
-    values = [var.region]
-  }
-}
-
-# Create SSH key from provided public key
-resource "vultr_ssh_key" "server_key" {
-  name    = "${var.hostname}-ssh-key"
-  ssh_key = var.ssh_public_key
 }
 
 # Create the VPS instance
-resource "vultr_instance" "mail_server" {
-  plan     = data.vultr_plan.server_plan.id
-  region   = data.vultr_region.server_region.id
-  os_id    = data.vultr_os.debian.id
+resource "vultr_instance" "server" {
+  plan     = var.plan_id
+  region   = var.region_id
+  os_id    = var.os_id
   label    = var.label
   hostname = var.hostname
   tags     = var.tags
 
-  # SSH key for authentication
-  ssh_key_ids = [vultr_ssh_key.server_key.id]
+  # Enable automatic backups
+  backups = var.enable_backups ? "enabled" : "disabled"
 
-  # Enable IPv6
-  enable_ipv6 = true
+  # Disable IPv6
+  enable_ipv6 = false
 
-  # Minimal user data
-  user_data = base64encode(<<-EOF
-    #!/bin/bash
-    echo "Vultr instance provisioned at $(date)" > /root/provision.log
-    hostnamectl set-hostname ${var.hostname}
-  EOF
-  )
+  # Attach SSH key
+  ssh_key_ids = [data.vultr_ssh_key.existing.id]
 
-  # Resource-specific settings
-  ddos_protection  = false
-  activation_email = false
+  # Optional: Script ID for startup script
+  # script_id = var.script_id
 }

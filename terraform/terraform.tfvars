@@ -1,11 +1,23 @@
-# terraform/terraform.tfvars
+# Terraform variables file
+# Copy this to terraform.tfvars and fill in your values
 
-# Server specifications (from Vultr_specs.md)
-server_plan = "vc2-2c-4gb"
-hostname    = "cucho1.phalkons.com"
-region      = "Dallas"
-os_name     = "Debian 13 x64 (Bookworm)"
+# SSH Key (existing in your Vultr account)
+ssh_key_name = "LC02 Vultr"
 
-# Instance configuration
-label = "mail-server-poc"
-tags  = ["mail-server", "poc", "production", "terraform-managed"]
+# VPS Configuration
+plan_id   = "vc2-2c-4gb" # 2 vCPU, 4GB RAM
+region_id = "dfw"        # New Jersey
+os_id     = 2625         # Ubuntu 24.04 LTS
+
+# Server Details
+hostname = "cucho1.phalkons.com"
+label    = "cucho1.phalkons.com"
+
+# Tags (optional)
+tags = ["production", "mail-server", "terraform"]
+
+# Backups
+enable_backups = true
+
+# Future: Instance count
+# instance_count = 1
