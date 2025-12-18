@@ -1,0 +1,19 @@
+================================================================================
+                        DEPLOYMENT INFORMATION
+================================================================================
+Deployed: Thu 18 Dec 2025 03:13:38 PM CST
+Hostname: cucho1.phalkons.com
+Region: dfw
+OS: Debian 13 x64 (trixie)
+
+Credentials File: ../cucho1.phalkons.com.secret
+Format: ip,password
+Permissions: 600 (owner read/write only)
+
+To connect:
+1. View credentials: cat ../cucho1.phalkons.com.secret
+2. SSH: ssh root@$(cut -d',' -f1 ../cucho1.phalkons.com.secret)
+
+================================================================================
+IMPORTANT: Change root password immediately after first login!
+================================================================================

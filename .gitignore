@@ -2,7 +2,7 @@
 *.tfstate
 *.tfstate.*
 *.tfvars
-!*.tfvars.example
+
 .terraform/
 .terraform.lock.hcl
 crash.log
@@ -10,9 +10,8 @@ crash.*.log
 
 # Sensitive files
 .env
-!.env.example
-*secrets*.json
 *password*.txt
+*.secret
 
 # OS files
 .DS_Store
@@ -24,3 +23,6 @@ Thumbs.db
 *.swp
 *.swo
 *~
+
+
+terraform_outputs_test.txt

@@ -25,8 +25,19 @@ resource "vultr_instance" "server" {
   hostname = var.hostname
   tags     = var.tags
 
-  # Enable automatic backups
+  # Enable automatic backups with schedule
   backups = var.enable_backups ? "enabled" : "disabled"
+
+  # Backup schedule (required when backups are enabled)
+  # Runs daily backups at 2 AM UTC with 7-day retention
+  dynamic "backups_schedule" {
+    for_each = var.enable_backups ? [1] : []
+    content {
+      type = "weekly"
+      hour = 5
+      dow  = 0 # Not used for daily backups, but required
+    }
+  }
 
   # Disable IPv6
   enable_ipv6 = false

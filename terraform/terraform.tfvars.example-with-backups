@@ -1,0 +1,38 @@
+# Vultr API Configuration
+# Note: Set your API key via environment variable instead:
+# export TF_VAR_vultr_api_key="your_api_key_here"
+
+# SSH Key (must already exist in your Vultr account)
+ssh_key_name = "my-ssh-key"
+
+# Server Plan (see PLAN_IDS.md for options)
+plan_id = "vc2-2c-4gb"  # 2 vCPU, 4GB RAM, 80GB SSD
+
+# Region (see REGION_CODES.md for options)
+region_id = "dfw"  # Dallas
+
+# Operating System (see OS_IDS.md for options)
+os_id = 2625  # Ubuntu 22.04 LTS or your preferred OS
+
+# Server Configuration
+hostname = "mail-server.example.com"
+label    = "Mail Server Production"
+tags     = ["production", "mail-server", "terraform"]
+
+# Backups Configuration
+enable_backups = true
+
+# Backup Schedule Options (only used if enable_backups = true)
+# Type options: "daily", "weekly", "monthly", "daily_alt_even", "daily_alt_odd"
+backup_schedule_type = "daily"
+
+# Hour to run backups (0-23, UTC timezone)
+# Example: 2 = 2:00 AM UTC
+backup_schedule_hour = 2
+
+# Day of week for weekly backups (0=Sunday, 1=Monday, ..., 6=Saturday)
+# Only used when backup_schedule_type = "weekly"
+backup_schedule_dow = 0
+
+# IPv6 Configuration
+enable_ipv6 = false

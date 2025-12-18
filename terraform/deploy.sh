@@ -29,8 +29,6 @@ echo ""
 echo "Deploying..."
 terraform apply -auto-approve \
   -var-file="terraform.tfvars" \
-  -var="vultr_api_key=$VULTR_API_KEY" \
-  -var="ssh_public_key=$VULTR_SSH_PUBLIC_KEY"
 
 echo ""
 echo "✅ Deployment complete!"
