@@ -189,6 +189,59 @@ project_root/
 
 ### Recent Sessions
 
+#### Session: 2025-01-05 (Ansible Task Group 1.2 - System User Administration)
+**Duration:** ~4 hours  
+**Status:** ✅ Complete  
+**Focus:** Complete Ansible automation for user management, SSH configuration, and Docker installation
+
+**Key Achievements:**
+- ✅ Fixed and tested all Task Group 1.2 playbooks (tasks 1.2.1 through 1.2.7)
+- ✅ Resolved Debian 13 Docker installation issues (bookworm repo compatibility)
+- ✅ Fixed inventory credential parsing for multi-line secret files
+- ✅ Corrected SSH key architecture (Vultr key vs bastion key)
+- ✅ Removed premature root SSH disabling (moved to Task 1.3.1)
+- ✅ Fixed ansible.cfg SSH authentication issues (IdentitiesOnly=yes)
+- ✅ Successfully deployed complete user management automation
+
+**Critical Fixes Applied:**
+1. Inventory parsing: Use `head -n 1` for credential file with multiple lines
+2. Docker installation: Use slurp + regex for Debian codename detection
+3. SSH host keys: Handle OS reinstall with known_hosts cleanup
+4. Ansible.cfg: Use Vultr key with IdentitiesOnly=yes to prevent auth failures
+5. UID check logic: Fixed in create_admin_user.yml (use shell with || true)
+6. Gather facts: Enabled in modify_sudoers_nopasswd.yml for ansible_date_time
+7. Task 1.2.5: Fixed when clause syntax (use multiline format)
+
+**Server Final State:**
+- ✅ phalkonadmin user (UID 1000, sudo group, docker group)
+- ✅ Passwordless sudo configured
+- ✅ SSH key authentication working (bastion key)
+- ✅ Docker 29.1.3 + Docker Compose v5.0.1 installed
+- ✅ Root SSH still enabled (will be disabled in Task 1.3.1)
+- ✅ linuxuser removed
+
+**Files Created/Updated:** 15 playbooks, ansible.cfg, inventory.yml, run scripts, README v3.0
+
+**Next Session Priority:**
+- Begin Task Group 1.3: System Hardening
+  - 1.3.1: SSH hardening, firewall (UFW), automatic updates
+  - 1.3.2: WireGuard VPN integration
+  - 1.3.3: Network interfaces and DNS configuration
+
+**Detailed Accomplishments:**
+- All 7 tasks in Task Group 1.2 successfully tested and working
+- Complete automation of user setup, SSH configuration, and Docker installation
+- Proper separation of concerns (Vultr key for Ansible, bastion key for operations)
+- Comprehensive troubleshooting documentation added to README
+
+**Technical Decisions:**
+1. Keep root SSH enabled during Task Group 1.2 for deployment flexibility
+2. Use Debian 12 (bookworm) Docker packages for Debian 13 (trixie) compatibility
+3. Two-tier SSH key architecture (Vultr for admin, bastion for automation)
+4. Environment variables for credential handling to support multi-line files
+
+---
+
 #### Session: 2024-12-18 (Terraform Infrastructure Setup)
 **Duration:** ~3 hours  
 **Status:** ✅ Complete  

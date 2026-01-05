@@ -14,15 +14,20 @@
     target_uid: "{{ admin_uid | default(1000) }}"
   
   tasks:
-    - name: Check if UID 1000 is available
-      ansible.builtin.command:
-        cmd: "getent passwd 1000"
-      register: uid_1000_check
+    - name: Check if UID is already in use
+      ansible.builtin.shell:
+        cmd: "getent passwd {{ target_uid }} || true"
+      register: uid_check
       changed_when: false
-      ignore_errors: true
       tags:
         - user-management
         - verification
+    
+    - name: Set UID availability fact
+      ansible.builtin.set_fact:
+        uid_available: "{{ uid_check.stdout == '' }}"
+      tags:
+        - user-management
     
     - name: Create admin user with specific UID
       ansible.builtin.user:
@@ -34,11 +39,11 @@
         home: "/home/{{ admin_user }}"
         groups: "{{ admin_groups | join(',') }}"
         append: yes
-      when: uid_1000_check.rc != 0
+      when: uid_available
       tags:
         - user-management
     
-    - name: Create admin user without UID (if 1000 taken)
+    - name: Create admin user without specific UID (if UID taken)
       ansible.builtin.user:
         name: "{{ admin_user }}"
         comment: "{{ admin_fullname }}"
@@ -47,7 +52,7 @@
         home: "/home/{{ admin_user }}"
         groups: "{{ admin_groups | join(',') }}"
         append: yes
-      when: uid_1000_check.rc == 0
+      when: not uid_available
       tags:
         - user-management
     

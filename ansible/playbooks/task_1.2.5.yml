@@ -25,16 +25,13 @@
     test_user: "phalkonadmin"
     # Using common worker key (bastion key) for testing
     ssh_private_key: "{{ bastion_ssh_key_private }}"
-    # Using Vultr key to test root SSH access (should fail)
-    vultr_private_key: "{{ vultr_ssh_key }}"
     # Get the actual IP address from ansible_host
     target_host: "{{ ansible_host }}"
   
   tasks:
-    - name: Expand SSH key paths
+    - name: Expand SSH key path
       ansible.builtin.set_fact:
         ssh_key_expanded: "{{ ssh_private_key | expanduser }}"
-        vultr_key_expanded: "{{ vultr_private_key | expanduser }}"
       delegate_to: localhost
       tags:
         - ssh-test
@@ -73,17 +70,6 @@
         - uid-test
         - verification
     
-    - name: Verify root SSH is disabled
-      ansible.builtin.command:
-        cmd: "ssh -i {{ vultr_key_expanded }} -o BatchMode=yes -o ConnectTimeout=10 -o PasswordAuthentication=no root@{{ target_host }} echo 'root SSH should fail'"
-      delegate_to: localhost
-      register: root_ssh_test
-      changed_when: false
-      ignore_errors: true
-      tags:
-        - root-ssh-test
-        - verification
-    
     - name: Display enhanced test results
       ansible.builtin.debug:
         msg:
@@ -97,8 +83,10 @@
           - "SSH Key Authentication: {{ 'SUCCESS ✓' if ssh_test_result.rc == 0 else 'FAILED ✗' }}"
           - "Passwordless Sudo: {{ 'SUCCESS ✓' if sudo_test_result.rc == 0 and sudo_test_result.stdout == 'root' else 'FAILED ✗' }}"
           - "UID Assignment (should be 1000): {{ 'CORRECT ✓' if uid_test_result.rc == 0 and uid_test_result.stdout.strip() == '1000' else 'INCORRECT ✗' }}"
-          - "Root SSH Disabled: {{ 'YES ✓' if root_ssh_test.rc != 0 else 'NO ✗ (VULNERABLE)' }}"
           - "---------------------------------------------------"
+          - ""
+          - "Note: This test validates bastion → VPS connectivity"
+          - "      Your local Vultr key access remains unchanged"
       tags:
         - verification
     
@@ -111,19 +99,15 @@
           {{ '✓' if ssh_test_result.rc == 0 else '✗' }} SSH Key Authentication
           {{ '✓' if sudo_test_result.rc == 0 and sudo_test_result.stdout == 'root' else '✗' }} Passwordless Sudo
           {{ '✓' if uid_test_result.rc == 0 and uid_test_result.stdout.strip() == '1000' else '✗' }} UID 1000 Assignment
-          {{ '✓' if root_ssh_test.rc != 0 else '✗' }} Root SSH Disabled
           
           Troubleshooting:
           1. Verify key was deployed: ssh root@{{ target_host }} 'cat /home/phalkonadmin/.ssh/authorized_keys'
           2. Check UID: ssh root@{{ target_host }} 'id phalkonadmin'
-          3. Check SSH config: ssh root@{{ target_host }} 'grep -E "^(PermitRootLogin|PasswordAuthentication)" /etc/ssh/sshd_config'
-          4. Test manually: ssh -i {{ ssh_key_expanded }} phalkonadmin@{{ target_host }}
-          5. Test root SSH (should fail): ssh -i {{ vultr_key_expanded }} root@{{ target_host }}
-      when: 
-        - ssh_test_result.rc != 0 
-        - or sudo_test_result.rc != 0 
-        - or uid_test_result.rc != 0 
-        - or uid_test_result.stdout.strip() != '1000'
-        - or root_ssh_test.rc == 0
+          3. Test manually: ssh -i {{ ssh_key_expanded }} phalkonadmin@{{ target_host }}
+      when: >
+        ssh_test_result.rc != 0 or
+        sudo_test_result.rc != 0 or
+        uid_test_result.rc != 0 or
+        uid_test_result.stdout.strip() != '1000'
       tags:
         - verification

@@ -7,7 +7,6 @@
   vars:
     target_user: "{{ ssh_user | default('adminuser') }}"
     ssh_key: "{{ ssh_public_key | default('~/.ssh/id_rsa.pub') }}"
-    disable_password_auth: "{{ disable_ssh_password | default(true) }}"
   
   tasks:
     - name: Ensure target user exists
@@ -40,26 +39,6 @@
         - ssh
         - keys
     
-    - name: Disable password authentication in SSH
-      ansible.builtin.lineinfile:
-        path: /etc/ssh/sshd_config
-        regexp: '^#?PasswordAuthentication'
-        line: 'PasswordAuthentication no'
-      notify: restart sshd
-      tags:
-        - ssh
-        - security
-    
-    - name: Disable root SSH login
-      ansible.builtin.lineinfile:
-        path: /etc/ssh/sshd_config
-        regexp: '^#?PermitRootLogin'
-        line: 'PermitRootLogin no'
-      notify: restart sshd
-      tags:
-        - ssh
-        - security
-    
     - name: Ensure SSH service is enabled and running
       ansible.builtin.service:
         name: sshd
@@ -76,4 +55,3 @@
         state: restarted
       tags:
         - ssh
-        

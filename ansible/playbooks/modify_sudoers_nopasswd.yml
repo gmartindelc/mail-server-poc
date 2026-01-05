@@ -3,7 +3,7 @@
 - name: Configure passwordless sudo for sudo group
   hosts: all
   become: true
-  gather_facts: false
+  gather_facts: true  # Changed from false to true to get ansible_date_time
   
   tasks:
     - name: Create sudoers configuration for passwordless sudo
