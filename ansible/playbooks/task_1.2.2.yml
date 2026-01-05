@@ -1,15 +1,13 @@
-# ansible/playbooks/task_1.2.2.yml
 ---
+# Task 1.2.2 - Remove default linuxuser
+#
+# Removes the default 'linuxuser' account that comes with Vultr VPS.
+# This improves security by eliminating unused default accounts.
+#
+# Dependencies: Task 1.2.1 (passwordless sudo configured)
+# Execution: ./run_task.sh 1.2.2
+
 - name: Task 1.2.2 - Remove default linuxuser
-  hosts: mail_server
-  gather_facts: true
-  
+  import_playbook: remove_user.yml
   vars:
     user_name: "linuxuser"
-  
-  tasks:
-    - name: Include remove_user playbook
-      ansible.builtin.include_playbook:
-        name: remove_user.yml
-      tags:
-        - task-1.2.2

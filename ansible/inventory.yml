@@ -1,0 +1,54 @@
+---
+# Ansible Inventory for Mail Server PoC
+# Location: ansible/inventory.yml
+#
+# IMPORTANT: This inventory expects the credential file to be parsed BEFORE running Ansible.
+# The run_task.sh and run_all_tasks.sh scripts handle this automatically.
+#
+# For manual execution, set environment variables first:
+#   export MAIL_SERVER_IP=$(cut -d',' -f1 ../cucho1.phalkons.com.secret)
+#   export MAIL_SERVER_PASS=$(cut -d',' -f2 ../cucho1.phalkons.com.secret)
+#   ansible-playbook -i inventory.yml playbook.yml
+#
+# Or use the run scripts which do this automatically.
+
+all:
+  children:
+    mail_servers:
+      hosts:
+        mail_server:
+          # These variables are set by the run scripts or environment
+          # If running manually, you must export MAIL_SERVER_IP and MAIL_SERVER_PASS
+          ansible_host: "{{ lookup('env', 'MAIL_SERVER_IP') }}"
+          ansible_user: root
+          ansible_ssh_pass: "{{ lookup('env', 'MAIL_SERVER_PASS') }}"
+          
+          # Using Vultr key for local machine access (PoC phase)
+          ansible_ssh_private_key_file: ~/.ssh/id_ed25519_lc02_vultr
+          ansible_python_interpreter: /usr/bin/python3
+          
+          # Server metadata
+          server_role: mail_server
+          server_environment: poc
+          server_hostname: cucho1.phalkons.com
+          
+          # Network configuration
+          vpn_network: 10.100.0.0/24
+          
+          # Mail server specific variables
+          mail_domain: phalkons.com
+          postgres_version: "17"
+          
+          # SSH Keys Configuration
+          # Vultr key (for local machine access - already on VPS)
+          vultr_ssh_key: ~/.ssh/id_ed25519_lc02_vultr
+          
+          # Common worker key (for bastion access - to be deployed)
+          bastion_ssh_key_public: ~/SSH_KEYS_CAPITAN_TO_WORKERS/id_ed25519_common.pub
+          bastion_ssh_key_private: ~/SSH_KEYS_CAPITAN_TO_WORKERS/id_ed25519_common
+          
+  vars:
+    # Global variables for all hosts
+    ansible_connection: ssh
+    ansible_port: 22
+    ansible_ssh_common_args: '-o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=/dev/null'

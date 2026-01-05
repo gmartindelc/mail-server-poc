@@ -1,4 +1,3 @@
-# ansible/playbooks/setup_ssh_key_auth.yml
 ---
 - name: Configure SSH key authentication for user
   hosts: all
@@ -11,6 +10,14 @@
     disable_password_auth: "{{ disable_ssh_password | default(true) }}"
   
   tasks:
+    - name: Ensure target user exists
+      ansible.builtin.user:
+        name: "{{ target_user }}"
+        state: present
+      tags:
+        - ssh
+        - verification
+    
     - name: Create .ssh directory for user
       ansible.builtin.file:
         path: "/home/{{ target_user }}/.ssh"
@@ -33,27 +40,34 @@
         - ssh
         - keys
     
-    - name: Disable password authentication in SSH (optional)
+    - name: Disable password authentication in SSH
       ansible.builtin.lineinfile:
         path: /etc/ssh/sshd_config
         regexp: '^#?PasswordAuthentication'
         line: 'PasswordAuthentication no'
-      when: disable_password_auth
       notify: restart sshd
       tags:
         - ssh
         - security
     
-    - name: Disable root SSH login (optional)
+    - name: Disable root SSH login
       ansible.builtin.lineinfile:
         path: /etc/ssh/sshd_config
         regexp: '^#?PermitRootLogin'
         line: 'PermitRootLogin no'
-      when: disable_password_auth
       notify: restart sshd
       tags:
         - ssh
         - security
+    
+    - name: Ensure SSH service is enabled and running
+      ansible.builtin.service:
+        name: sshd
+        state: started
+        enabled: yes
+      tags:
+        - ssh
+        - service
   
   handlers:
     - name: restart sshd
@@ -62,3 +76,4 @@
         state: restarted
       tags:
         - ssh
+        

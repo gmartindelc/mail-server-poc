@@ -26,3 +26,5 @@ Thumbs.db
 
 
 terraform_outputs_test.txt
+ansible/retry
+ansible.log

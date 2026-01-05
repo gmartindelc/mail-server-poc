@@ -1,0 +1,215 @@
+---
+# Reusable Playbook: Install Docker and Docker Compose
+#
+# Installs Docker Engine and Docker Compose plugin on Debian 13 (trixie).
+# Uses Debian 12 (bookworm) packages from Docker's official repository.
+#
+# Variables:
+#   docker_users: List of users to add to docker group (default: ['adminuser'])
+
+- name: Install Docker and Docker Compose
+  hosts: all
+  become: true
+  gather_facts: true
+  
+  vars:
+    docker_users: "{{ docker_user_list | default(['adminuser']) }}"
+    install_compose: "{{ install_docker_compose | default(true) }}"
+  
+  tasks:
+    - name: Update apt cache
+      ansible.builtin.apt:
+        update_cache: yes
+        cache_valid_time: 3600
+      tags:
+        - docker
+        - docker-install
+    
+    - name: Remove old Docker packages (if any)
+      ansible.builtin.apt:
+        name:
+          - docker
+          - docker-engine
+          - docker.io
+          - containerd
+          - runc
+          - podman
+        state: absent
+      tags:
+        - docker
+        - docker-install
+        - cleanup
+    
+    - name: Install prerequisites
+      ansible.builtin.apt:
+        name:
+          - ca-certificates
+          - curl
+          - gnupg
+        state: present
+      tags:
+        - docker
+        - docker-install
+    
+    - name: Create directory for Docker GPG key
+      ansible.builtin.file:
+        path: /etc/apt/keyrings
+        state: directory
+        mode: '0755'
+      tags:
+        - docker
+        - docker-install
+    
+    - name: Download and install Docker GPG key
+      ansible.builtin.shell:
+        cmd: curl -fsSL https://download.docker.com/linux/debian/gpg | gpg --dearmor -o /etc/apt/keyrings/docker.gpg
+        creates: /etc/apt/keyrings/docker.gpg
+      tags:
+        - docker
+        - docker-install
+    
+    - name: Get DEB architecture
+      ansible.builtin.command:
+        cmd: dpkg --print-architecture
+      register: deb_architecture
+      changed_when: false
+      tags:
+        - docker
+        - docker-install
+    
+    - name: Get Debian version codename from /etc/os-release
+      ansible.builtin.shell:
+        cmd: ". /etc/os-release && echo $VERSION_CODENAME"
+      register: debian_codename_raw
+      changed_when: false
+      tags:
+        - docker
+        - docker-install
+    
+    - name: Set codename variable
+      ansible.builtin.set_fact:
+        debian_codename: "{{ debian_codename_raw.stdout | trim }}"
+      tags:
+        - docker
+        - docker-install
+    
+    - name: Set Docker repository codename (use bookworm for trixie)
+      ansible.builtin.set_fact:
+        docker_repo_codename: "{{ 'bookworm' if debian_codename == 'trixie' else debian_codename }}"
+      tags:
+        - docker
+        - docker-install
+    
+    - name: Display repository info
+      ansible.builtin.debug:
+        msg:
+          - "Debian codename: {{ debian_codename }}"
+          - "Docker repo codename: {{ docker_repo_codename }}"
+      tags:
+        - docker
+        - docker-install
+    
+    - name: Add Docker repository
+      ansible.builtin.apt_repository:
+        repo: "deb [arch={{ deb_architecture.stdout }} signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/debian {{ docker_repo_codename }} stable"
+        state: present
+        filename: docker
+      tags:
+        - docker
+        - docker-install
+    
+    - name: Update apt cache after adding Docker repo
+      ansible.builtin.apt:
+        update_cache: yes
+      tags:
+        - docker
+        - docker-install
+    
+    - name: Install Docker Engine and plugins
+      ansible.builtin.apt:
+        name:
+          - docker-ce
+          - docker-ce-cli
+          - containerd.io
+          - docker-buildx-plugin
+          - docker-compose-plugin
+        state: present
+      tags:
+        - docker
+        - docker-install
+    
+    - name: Ensure Docker service is enabled and started
+      ansible.builtin.systemd:
+        name: docker
+        state: started
+        enabled: yes
+      tags:
+        - docker
+        - docker-install
+    
+    - name: Add users to docker group
+      ansible.builtin.user:
+        name: "{{ item }}"
+        groups: docker
+        append: yes
+      loop: "{{ docker_users }}"
+      tags:
+        - docker
+        - user-permissions
+    
+    - name: Get Docker version
+      ansible.builtin.command:
+        cmd: docker --version
+      register: docker_version
+      changed_when: false
+      tags:
+        - docker
+        - verification
+    
+    - name: Get Docker Compose version
+      ansible.builtin.command:
+        cmd: docker compose version
+      register: docker_compose_version_output
+      changed_when: false
+      tags:
+        - docker
+        - docker-compose
+        - verification
+    
+    - name: Display installation summary
+      ansible.builtin.debug:
+        msg:
+          - "=========================================="
+          - "Docker Installation Complete!"
+          - "=========================================="
+          - "Docker version: {{ docker_version.stdout }}"
+          - "Docker Compose version: {{ docker_compose_version_output.stdout }}"
+          - "Users added to docker group: {{ docker_users | join(', ') }}"
+          - ""
+          - "IMPORTANT: Users must log out and back in"
+          - "           for group changes to take effect"
+          - "=========================================="
+      tags:
+        - docker
+        - verification
+    
+    - name: Verify Docker is running
+      ansible.builtin.command:
+        cmd: docker ps
+      register: docker_ps_test
+      changed_when: false
+      failed_when: docker_ps_test.rc != 0
+      tags:
+        - docker
+        - verification
+    
+    - name: Test Docker with hello-world (optional)
+      ansible.builtin.command:
+        cmd: docker run --rm hello-world
+      register: hello_world_test
+      changed_when: false
+      ignore_errors: yes
+      tags:
+        - docker
+        - verification
+        - test

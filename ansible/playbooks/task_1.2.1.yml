@@ -1,12 +1,11 @@
-# ansible/playbooks/task_1.2.1.yml
 ---
+# Task 1.2.1 - Configure passwordless sudo for sudo group
+# 
+# This playbook configures the sudo group to execute commands without password prompts.
+# This is required for automated deployments and administrative convenience.
+#
+# Dependencies: VPS must be provisioned and accessible
+# Execution: ./run_task.sh 1.2.1
+
 - name: Task 1.2.1 - Configure passwordless sudo for sudo group
-  hosts: mail_server
-  gather_facts: false
-  
-  tasks:
-    - name: Include modify_sudoers_nopasswd playbook
-      ansible.builtin.include_playbook:
-        name: modify_sudoers_nopasswd.yml
-      tags:
-        - task-1.2.1
+  import_playbook: modify_sudoers_nopasswd.yml

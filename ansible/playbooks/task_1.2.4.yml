@@ -1,0 +1,22 @@
+---
+# Task 1.2.4 - Configure SSH key authentication for phalkonadmin
+#
+# Sets up SSH key-based authentication for the phalkonadmin user.
+# This enables secure, password-less SSH access from the control node.
+#
+# Features:
+# - Deploys common worker SSH public key
+# - Creates .ssh directory with correct permissions
+# - Configures authorized_keys
+# - Disables root SSH access
+# - Disables password authentication
+#
+# Dependencies: Task 1.2.3 (phalkonadmin user created)
+# Execution: ./run_task.sh 1.2.4
+
+- name: Task 1.2.4 - Configure SSH key authentication for phalkonadmin
+  import_playbook: setup_ssh_key_auth.yml
+  vars:
+    ssh_user: "phalkonadmin"
+    ssh_public_key: "~/SSH_KEYS_CAPITAN_TO_WORKERS/id_ed25519_common.pub"
+    disable_ssh_password: true

@@ -51,28 +51,24 @@
 
   - _Estimate:_ 15 minutes
   - _Dependencies:_ 1.1.1
-  - _Prerequisites:_ SSH access to server as root
   - _Instructions:_
-    - Connect to VPS via SSH using root credentials from `hostname.secret`
-    - Edit `/etc/sudoers` or create file in `/etc/sudoers.d/`
-    - Add: `%sudo ALL=(ALL:ALL) NOPASSWD: ALL`
-    - Verify syntax with `visudo -c`
-  - _Assigned to:_
-  - _Completed on:_
+    - Configure passwordless sudo for sudo group
+    - Create /etc/sudoers.d/90-nopasswd-sudo
+    - Comment out default entry in main sudoers file
+  - _Playbook:_ `task_1.2.1.yml`
+  - _Command:_ `./run_task.sh 1.2.1`
 
 - [ ] **Task 1.2.2:** Remove default linuxuser completely
 
   - _Estimate:_ 10 minutes
   - _Dependencies:_ 1.2.1
   - _Instructions:_
-    - Ensure you're logged in as root
-    - Check if linuxuser exists: `id linuxuser`
-    - If exists, remove: `deluser --remove-home linuxuser`
-    - Verify removal: `id linuxuser` (should show "no such user")
-  - _Assigned to:_
-  - _Completed on:_
+    - Remove linuxuser and home directory
+    - Free up UID 1000 for phalkonadmin
+  - _Playbook:_ `task_1.2.2.yml`
+  - _Command:_ `./run_task.sh 1.2.2`
 
-- [ ] **Task 1.2.3:** Create user phalkonadmin with sudo privileges
+- [ ] **Task 1.2.3:** Create user phalkonadmin with sudo privileges and UID 1000
 
   - _Estimate:_ 20 minutes
   - _Dependencies:_ 1.2.2

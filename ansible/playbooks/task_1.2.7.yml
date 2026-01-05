@@ -1,0 +1,68 @@
+---
+# Task 1.2.7 - Post-configuration cleanup and verification
+#
+# This task should be run after all previous tasks to:
+# 1. Fix UID assignment if needed
+# 2. Clean up main sudoers file
+# 3. Verify complete configuration
+# 4. Remove any leftover artifacts
+#
+# Dependencies: Task 1.2.6 (Docker installation)
+# Execution: ./run_task.sh 1.2.7
+
+- name: Task 1.2.7 - Post-configuration cleanup and verification
+  hosts: mail_server
+  gather_facts: false
+  
+  tasks:
+    - name: Import UID fix playbook
+      import_playbook: fix_user_uid.yml
+      vars:
+        fix_username: "phalkonadmin"
+        fix_uid: 1000
+      tags:
+        - cleanup
+        - verification
+    
+    - name: Import sudoers cleanup playbook
+      import_playbook: cleanup_main_sudoers.yml
+      tags:
+        - cleanup
+        - verification
+    
+    - name: Final verification check
+      ansible.builtin.command:
+        cmd: |
+          echo "=== System Verification ==="
+          id phalkonadmin
+          echo "--- Sudoers check ---"
+          grep -r "NOPASSWD" /etc/sudoers*
+          echo "--- SSH config check ---"
+          grep -E "^(PermitRootLogin|PasswordAuthentication)" /etc/ssh/sshd_config
+          echo "--- Docker group check ---"
+          groups phalkonadmin
+      register: final_check
+      changed_when: false
+      tags:
+        - verification
+    
+    - name: Display final status
+      ansible.builtin.debug:
+        msg:
+          - "=========================================="
+          - "Task Group 1.2 - COMPLETE VERIFICATION"
+          - "=========================================="
+          - "System User Administration tasks completed."
+          - ""
+          - "Expected state:"
+          - "√ phalkonadmin uid=1000"
+          - "√ %sudo ALL=(ALL:ALL) NOPASSWD: ALL (in /etc/sudoers.d/)"
+          - "√ PermitRootLogin no"
+          - "√ PasswordAuthentication no"
+          - "√ phalkonadmin in sudo,docker groups"
+          - "√ Root SSH access disabled"
+          - "√ Password auth disabled"
+          - "√ Only phalkonadmin can SSH with common worker key"
+          - "=========================================="
+      tags:
+        - verification

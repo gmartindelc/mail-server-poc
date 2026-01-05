@@ -1,19 +1,23 @@
-# ansible/playbooks/task_1.2.3.yml
 ---
-- name: Task 1.2.3 - Create phalkonadmin user
-  hosts: mail_server
-  gather_facts: true
-  
+# Task 1.2.3 - Create phalkonadmin user with sudo privileges
+#
+# Creates the primary administrative user 'phalkonadmin' with:
+# - Full name: Phalkon Administrator
+# - Sudo group membership (passwordless)
+# - Randomly generated temporary password
+# - Credentials saved to parent directory
+# - UID 1000 (replacing linuxuser)
+#
+# Dependencies: Task 1.2.2 (linuxuser removed)
+# Execution: ./run_task.sh 1.2.3
+
+- name: Task 1.2.3 - Create phalkonadmin user with sudo privileges
+  import_playbook: create_admin_user.yml
   vars:
     admin_username: "phalkonadmin"
     admin_fullname: "Phalkon Administrator"
     admin_groups:
       - sudo
+    admin_uid: 1000
+    generate_temp_password: true
     credential_output_file: "../../cucho1.phalkons.com.secret"
-  
-  tasks:
-    - name: Include create_admin_user playbook
-      ansible.builtin.include_playbook:
-        name: create_admin_user.yml
-      tags:
-        - task-1.2.3

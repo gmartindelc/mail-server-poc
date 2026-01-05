@@ -1,0 +1,129 @@
+---
+# Task 1.2.5 - Test SSH key-based authentication
+#
+# Tests SSH key authentication for phalkonadmin user using the common worker key.
+# This validates that bastion server (Capitan) will be able to connect.
+#
+# Note: During PoC, this test is run from local machine but tests the bastion key.
+#       The test simulates what Capitan will do when connecting to VPS.
+#
+# Tests performed:
+# - SSH connection using common worker key (bastion key)
+# - Passwordless sudo execution
+# - User identity verification
+# - UID verification (should be 1000)
+# - Root SSH access verification (should be disabled)
+#
+# Dependencies: Task 1.2.4 (SSH keys configured)
+# Execution: ./run_task.sh 1.2.5
+
+- name: Task 1.2.5 - Test SSH key-based authentication
+  hosts: mail_server
+  gather_facts: false
+  
+  vars:
+    test_user: "phalkonadmin"
+    # Using common worker key (bastion key) for testing
+    ssh_private_key: "{{ bastion_ssh_key_private }}"
+    # Using Vultr key to test root SSH access (should fail)
+    vultr_private_key: "{{ vultr_ssh_key }}"
+    # Get the actual IP address from ansible_host
+    target_host: "{{ ansible_host }}"
+  
+  tasks:
+    - name: Expand SSH key paths
+      ansible.builtin.set_fact:
+        ssh_key_expanded: "{{ ssh_private_key | expanduser }}"
+        vultr_key_expanded: "{{ vultr_private_key | expanduser }}"
+      delegate_to: localhost
+      tags:
+        - ssh-test
+        - verification
+    
+    - name: Test SSH connection with common worker key (bastion key)
+      ansible.builtin.command:
+        cmd: "ssh -i {{ ssh_key_expanded }} -o BatchMode=yes -o ConnectTimeout=10 -o StrictHostKeyChecking=accept-new {{ test_user }}@{{ target_host }} echo 'SSH key authentication successful'"
+      delegate_to: localhost
+      register: ssh_test_result
+      changed_when: false
+      ignore_errors: true
+      tags:
+        - ssh-test
+        - verification
+    
+    - name: Test passwordless sudo with common worker key
+      ansible.builtin.command:
+        cmd: "ssh -i {{ ssh_key_expanded }} -o BatchMode=yes -o ConnectTimeout=10 {{ test_user }}@{{ target_host }} 'sudo -n whoami'"
+      delegate_to: localhost
+      register: sudo_test_result
+      changed_when: false
+      ignore_errors: true
+      tags:
+        - sudo-test
+        - verification
+    
+    - name: Verify phalkonadmin has UID 1000
+      ansible.builtin.command:
+        cmd: "ssh -i {{ ssh_key_expanded }} -o BatchMode=yes -o ConnectTimeout=10 {{ test_user }}@{{ target_host }} 'id -u'"
+      delegate_to: localhost
+      register: uid_test_result
+      changed_when: false
+      ignore_errors: true
+      tags:
+        - uid-test
+        - verification
+    
+    - name: Verify root SSH is disabled
+      ansible.builtin.command:
+        cmd: "ssh -i {{ vultr_key_expanded }} -o BatchMode=yes -o ConnectTimeout=10 -o PasswordAuthentication=no root@{{ target_host }} echo 'root SSH should fail'"
+      delegate_to: localhost
+      register: root_ssh_test
+      changed_when: false
+      ignore_errors: true
+      tags:
+        - root-ssh-test
+        - verification
+    
+    - name: Display enhanced test results
+      ansible.builtin.debug:
+        msg:
+          - "==================================================="
+          - "SSH Configuration Verification Results"
+          - "==================================================="
+          - "Testing: Common worker key (for bastion access)"
+          - "Key: {{ ssh_private_key }}"
+          - "Target: {{ test_user }}@{{ target_host }}"
+          - "---------------------------------------------------"
+          - "SSH Key Authentication: {{ 'SUCCESS ✓' if ssh_test_result.rc == 0 else 'FAILED ✗' }}"
+          - "Passwordless Sudo: {{ 'SUCCESS ✓' if sudo_test_result.rc == 0 and sudo_test_result.stdout == 'root' else 'FAILED ✗' }}"
+          - "UID Assignment (should be 1000): {{ 'CORRECT ✓' if uid_test_result.rc == 0 and uid_test_result.stdout.strip() == '1000' else 'INCORRECT ✗' }}"
+          - "Root SSH Disabled: {{ 'YES ✓' if root_ssh_test.rc != 0 else 'NO ✗ (VULNERABLE)' }}"
+          - "---------------------------------------------------"
+      tags:
+        - verification
+    
+    - name: Fail if tests did not pass
+      ansible.builtin.fail:
+        msg: |
+          SSH key authentication or passwordless sudo test failed!
+          
+          Issues detected:
+          {{ '✓' if ssh_test_result.rc == 0 else '✗' }} SSH Key Authentication
+          {{ '✓' if sudo_test_result.rc == 0 and sudo_test_result.stdout == 'root' else '✗' }} Passwordless Sudo
+          {{ '✓' if uid_test_result.rc == 0 and uid_test_result.stdout.strip() == '1000' else '✗' }} UID 1000 Assignment
+          {{ '✓' if root_ssh_test.rc != 0 else '✗' }} Root SSH Disabled
+          
+          Troubleshooting:
+          1. Verify key was deployed: ssh root@{{ target_host }} 'cat /home/phalkonadmin/.ssh/authorized_keys'
+          2. Check UID: ssh root@{{ target_host }} 'id phalkonadmin'
+          3. Check SSH config: ssh root@{{ target_host }} 'grep -E "^(PermitRootLogin|PasswordAuthentication)" /etc/ssh/sshd_config'
+          4. Test manually: ssh -i {{ ssh_key_expanded }} phalkonadmin@{{ target_host }}
+          5. Test root SSH (should fail): ssh -i {{ vultr_key_expanded }} root@{{ target_host }}
+      when: 
+        - ssh_test_result.rc != 0 
+        - or sudo_test_result.rc != 0 
+        - or uid_test_result.rc != 0 
+        - or uid_test_result.stdout.strip() != '1000'
+        - or root_ssh_test.rc == 0
+      tags:
+        - verification

@@ -1,0 +1,26 @@
+---
+# Task 1.2.6 - Install Docker Compose plugin and configure permissions
+#
+# Installs Docker Engine and Docker Compose plugin on the VPS.
+# Configures phalkonadmin user to run Docker commands without sudo.
+#
+# What gets installed:
+# - Docker CE (Community Edition)
+# - Docker Compose plugin (v2)
+# - Containerd runtime
+#
+# Post-installation:
+# - phalkonadmin added to docker group
+# - Docker service enabled and started
+#
+# Note: User must reconnect SSH for group changes to take effect
+#
+# Dependencies: Task 1.2.5 (SSH key auth tested)
+# Execution: ./run_task.sh 1.2.6
+
+- name: Task 1.2.6 - Install Docker and configure permissions
+  import_playbook: install_docker.yml
+  vars:
+    docker_user_list:
+      - phalkonadmin
+    install_docker_compose: true

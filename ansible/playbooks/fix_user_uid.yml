@@ -1,0 +1,79 @@
+---
+# ansible/playbooks/fix_user_uid.yml
+---
+- name: Fix user UID assignment
+  hosts: all
+  become: true
+  gather_facts: true
+  
+  vars:
+    target_user: "{{ fix_username | default('phalkonadmin') }}"
+    target_uid: "{{ fix_uid | default(1000) }}"
+  
+  tasks:
+    - name: Check current user info
+      ansible.builtin.command:
+        cmd: "id {{ target_user }}"
+      register: current_user_info
+      changed_when: false
+      tags:
+        - verification
+    
+    - name: Extract current UID
+      ansible.builtin.set_fact:
+        current_uid: "{{ current_user_info.stdout | regex_search('uid=([0-9]+)') | regex_replace('uid=', '') | regex_replace('\\(.*', '') | int }}"
+      tags:
+        - verification
+    
+    - name: Check if target UID is free
+      ansible.builtin.command:
+        cmd: "getent passwd {{ target_uid }}"
+      register: uid_check
+      changed_when: false
+      ignore_errors: true
+      tags:
+        - verification
+    
+    - name: Fix UID if different from target and target is free
+      ansible.builtin.user:
+        name: "{{ target_user }}"
+        uid: "{{ target_uid }}"
+        move_home: yes
+      when: current_uid != target_uid and uid_check.rc != 0
+      tags:
+        - user-management
+        - fix
+    
+    - name: Fix ownership of home directory
+      ansible.builtin.file:
+        path: "/home/{{ target_user }}"
+        owner: "{{ target_user }}"
+        group: "{{ target_user }}"
+        recurse: yes
+      when: current_uid != target_uid
+      tags:
+        - user-management
+        - fix
+    
+    - name: Verify fixed user info
+      ansible.builtin.command:
+        cmd: "id {{ target_user }}"
+      register: fixed_user_info
+      changed_when: false
+      tags:
+        - verification
+    
+    - name: Display fix results
+      ansible.builtin.debug:
+        msg:
+          - "=========================================="
+          - "UID Fix Results"
+          - "=========================================="
+          - "User: {{ target_user }}"
+          - "Old UID: {{ current_uid }}"
+          - "New UID: {{ target_uid }}"
+          - "Status: {{ 'Fixed ✓' if current_uid != target_uid else 'Already correct' }}"
+          - "Current info: {{ fixed_user_info.stdout }}"
+          - "=========================================="
+      tags:
+        - verification
