@@ -13,6 +13,7 @@
 **Next Action:** Begin Task Group 1.3 - System Hardening
 
 **Key Achievements:**
+
 - Complete Ansible automation for user management and Docker installation
 - Fixed Debian 13 Docker compatibility issues
 - Proper SSH key architecture established
@@ -119,6 +120,7 @@
   - _Notes:_ Final verification of all configurations
 
 **Task Group 1.2 Summary:**
+
 - Duration: ~4 hours (including debugging and testing)
 - All tasks automated with Ansible
 - Server ready for system hardening (Task Group 1.3)
@@ -138,11 +140,13 @@
     - Configure SSH hardening:
       - Disable root login: `PermitRootLogin no`
       - Use key authentication only: `PasswordAuthentication no`
-      - Change default port (optional): `Port 2222`
+      - Change default port (required): `Port 2288`
+      - Disable port 22
     - Configure firewall (UFW):
       - Install: `sudo apt install ufw`
       - Set defaults: `sudo ufw default deny incoming`, `sudo ufw default allow outgoing`
-      - Allow SSH: `sudo ufw allow 22/tcp` (or custom port)
+      - Allow SSH: `sudo ufw allow 2288/tcp` (or custom port)
+      - Disable port 22: `sudo ufw deny 22/tcp`
       - Enable: `sudo ufw enable`
     - Configure automatic updates:
       - Install: `sudo apt install unattended-upgrades`
@@ -159,8 +163,15 @@
   - _Completed on:_
 
 - [ ] **Task 1.3.3:** Configure network interfaces and DNS resolution
+
   - _Estimate:_ 30 minutes
   - _Dependencies:_ 1.3.2
+  - _Assigned to:_
+  - _Completed on:_
+
+- [ ] **Task 1.3.4:** Create start dependency on ssh after wireguard is up
+  - _Estimate:_ 30 minutes
+  - _Dependencies:_ 1.3.3
   - _Assigned to:_
   - _Completed on:_
 
