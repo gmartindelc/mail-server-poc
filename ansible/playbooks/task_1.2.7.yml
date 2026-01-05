@@ -1,4 +1,3 @@
----
 # Task 1.2.7 - Post-configuration cleanup and verification
 #
 # This task should be run after all previous tasks to:
@@ -10,26 +9,18 @@
 # Dependencies: Task 1.2.6 (Docker installation)
 # Execution: ./run_task.sh 1.2.7
 
-- name: Task 1.2.7 - Post-configuration cleanup and verification
+- import_playbook: fix_user_uid.yml
+  vars:
+    fix_username: "phalkonadmin"
+    fix_uid: 1000
+
+- import_playbook: cleanup_main_sudoers.yml
+
+- name: Task 1.2.7 - Final verification and status
   hosts: mail_server
   gather_facts: false
   
   tasks:
-    - name: Import UID fix playbook
-      import_playbook: fix_user_uid.yml
-      vars:
-        fix_username: "phalkonadmin"
-        fix_uid: 1000
-      tags:
-        - cleanup
-        - verification
-    
-    - name: Import sudoers cleanup playbook
-      import_playbook: cleanup_main_sudoers.yml
-      tags:
-        - cleanup
-        - verification
-    
     - name: Final verification check
       ansible.builtin.command:
         cmd: |
@@ -41,10 +32,10 @@
           grep -E "^(PermitRootLogin|PasswordAuthentication)" /etc/ssh/sshd_config
           echo "--- Docker group check ---"
           groups phalkonadmin
+          echo "--- UID check ---"
+          id -u phalkonadmin
       register: final_check
       changed_when: false
-      tags:
-        - verification
     
     - name: Display final status
       ansible.builtin.debug:
@@ -53,6 +44,9 @@
           - "Task Group 1.2 - COMPLETE VERIFICATION"
           - "=========================================="
           - "System User Administration tasks completed."
+          - ""
+          - "Verification output:"
+          - "{{ final_check.stdout_lines | join('\n') }}"
           - ""
           - "Expected state:"
           - "√ phalkonadmin uid=1000"
@@ -64,5 +58,3 @@
           - "√ Password auth disabled"
           - "√ Only phalkonadmin can SSH with common worker key"
           - "=========================================="
-      tags:
-        - verification

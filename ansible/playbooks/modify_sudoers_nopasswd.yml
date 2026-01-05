@@ -1,4 +1,5 @@
----
+# ansible/playbooks/modify_sudoers_nopasswd.yml
+
 - name: Configure passwordless sudo for sudo group
   hosts: all
   become: true

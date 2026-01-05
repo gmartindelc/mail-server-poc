@@ -1,4 +1,3 @@
----
 # Reusable Playbook: Install Docker and Docker Compose
 #
 # Installs Docker Engine and Docker Compose plugin on Debian 13 (trixie).
@@ -208,7 +207,7 @@
         cmd: docker run --rm hello-world
       register: hello_world_test
       changed_when: false
-      ignore_errors: yes
+      ignore_errors: true
       tags:
         - docker
         - verification

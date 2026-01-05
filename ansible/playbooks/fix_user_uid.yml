@@ -1,6 +1,5 @@
----
 # ansible/playbooks/fix_user_uid.yml
----
+
 - name: Fix user UID assignment
   hosts: all
   become: true

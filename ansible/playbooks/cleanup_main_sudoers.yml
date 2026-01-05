@@ -1,6 +1,5 @@
----
 # ansible/playbooks/cleanup_main_sudoers.yml
----
+
 - name: Clean up main sudoers file default entry
   hosts: all
   become: true
