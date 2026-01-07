@@ -1,0 +1,52 @@
+---
+# Task 1.3.4 - Create SSH Dependency on WireGuard + Restrict to VPN Only
+# Description: Configure SSH to start after WireGuard and restrict access to VPN only
+# Dependencies: Task 1.3.3 (Network interfaces verified)
+# Duration: ~45 seconds
+#
+# ⚠️ CRITICAL SECURITY CHANGE ⚠️
+# After this task, SSH will ONLY be accessible via VPN (10.100.0.25:2288)
+# Public SSH access (45.32.207.84:2288) will be BLOCKED
+#
+# What this task does:
+# 1. Configure systemd SSH service to depend on WireGuard
+# 2. Bind SSH to WireGuard interface only (10.100.0.25:2288)
+# 3. Update UFW to allow SSH only from VPN network (10.100.0.0/24)
+# 4. Remove public SSH access from firewall
+# 5. Create rollback script for emergency recovery
+# 6. Test VPN SSH connectivity before applying changes
+#
+# IMPORTANT: 
+# - Keep Vultr web console access available for emergency recovery
+# - VPN must be working before running this task
+# - After this task, use: ssh -p 2288 phalkonadmin@10.100.0.25
+#
+# Task Group: 1.3 - System Hardening
+# Version: 1.0
+# Created: 2025-01-07
+
+- name: Task 1.3.4 - Create SSH Dependency on WireGuard + Restrict to VPN Only
+  import_playbook: configure_ssh_vpn_only.yml
+  vars:
+    # SSH VPN Configuration
+    ssh_vpn_only_enabled: true
+    
+    # WireGuard Interface
+    wireguard_interface: "wg0"
+    wireguard_service: "wg-quick@wg0"
+    
+    # VPN Network
+    vpn_ip: "10.100.0.25"
+    vpn_network: "10.100.0.0/24"
+    ssh_port: 2288
+    
+    # Safety Features
+    create_rollback_script: true
+    verify_vpn_before_changes: true
+    
+    # Systemd Dependency
+    configure_systemd_dependency: true
+    
+    # Task metadata
+    task_number: "1.3.4"
+    task_description: "Configure SSH to depend on WireGuard and restrict to VPN only"

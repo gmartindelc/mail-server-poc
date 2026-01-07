@@ -1,0 +1,316 @@
+---
+# Reusable Playbook: Configure SSH for VPN-Only Access
+# Purpose: Restrict SSH access to VPN network only and create systemd dependency
+# Parameters:
+#   - ssh_vpn_only_enabled: Enable VPN-only SSH (default: true)
+#   - wireguard_interface: WireGuard interface name (default: wg0)
+#   - wireguard_service: WireGuard systemd service (default: wg-quick@wg0)
+#   - vpn_ip: VPN IP address (default: 10.100.0.25)
+#   - vpn_network: VPN network CIDR (default: 10.100.0.0/24)
+#   - ssh_port: SSH port (default: 2288)
+#   - create_rollback_script: Create emergency rollback script (default: true)
+#   - verify_vpn_before_changes: Test VPN connectivity first (default: true)
+#   - configure_systemd_dependency: Add SSH->WireGuard dependency (default: true)
+#
+# Version: 1.0
+# Created: 2025-01-07
+
+- name: Configure SSH for VPN-Only Access
+  hosts: mail_server
+  become: true
+  gather_facts: true
+  
+  vars:
+    ssh_vpn_only_enabled: true
+    wireguard_interface: "wg0"
+    wireguard_service: "wg-quick@wg0"
+    vpn_ip: "10.100.0.25"
+    vpn_network: "10.100.0.0/24"
+    ssh_port: 2288
+    create_rollback_script: true
+    verify_vpn_before_changes: true
+    configure_systemd_dependency: true
+    backup_suffix: "{{ ansible_date_time.iso8601_basic_short }}"
+  
+  tasks:
+    # ============================================================================
+    # PHASE 1: PRE-FLIGHT CHECKS
+    # ============================================================================
+    
+    - name: Display SSH VPN configuration
+      debug:
+        msg:
+          - "=== SSH VPN-Only Configuration ==="
+          - "⚠️  CRITICAL SECURITY CHANGE ⚠️"
+          - ""
+          - "After this task:"
+          - "  ✗ SSH from public IP ({{ ansible_host }}:{{ ssh_port }}) will be BLOCKED"
+          - "  ✓ SSH via VPN IP ({{ vpn_ip }}:{{ ssh_port }}) will be ALLOWED"
+          - ""
+          - "Configuration:"
+          - "  - WireGuard Interface: {{ wireguard_interface }}"
+          - "  - VPN IP: {{ vpn_ip }}"
+          - "  - VPN Network: {{ vpn_network }}"
+          - "  - SSH Port: {{ ssh_port }}"
+          - "  - Systemd Dependency: {{ 'Enabled' if configure_systemd_dependency else 'Disabled' }}"
+          - ""
+          - "New SSH command: ssh -p {{ ssh_port }} phalkonadmin@{{ vpn_ip }}"
+    
+    - name: Check if WireGuard is running
+      command: systemctl is-active {{ wireguard_service }}
+      register: wg_status
+      changed_when: false
+      failed_when: wg_status.rc != 0
+      when: ssh_vpn_only_enabled
+    
+    - name: Verify WireGuard interface has correct IP
+      command: ip addr show {{ wireguard_interface }}
+      register: wg_ip_check
+      changed_when: false
+      failed_when: vpn_ip not in wg_ip_check.stdout
+      when: ssh_vpn_only_enabled
+    
+    - name: Test VPN connectivity before making changes
+      command: ping -c 2 -W 2 -I {{ wireguard_interface }} 10.100.0.1
+      register: vpn_connectivity_test
+      changed_when: false
+      failed_when: false
+      when:
+        - ssh_vpn_only_enabled
+        - verify_vpn_before_changes
+    
+    - name: Display VPN connectivity test result
+      debug:
+        msg: "{{ '✓ VPN connectivity test: SUCCESS' if vpn_connectivity_test.rc == 0 else '⚠ VPN connectivity test: FAILED (continuing anyway)' }}"
+      when:
+        - ssh_vpn_only_enabled
+        - verify_vpn_before_changes
+    
+    # ============================================================================
+    # PHASE 2: CREATE ROLLBACK SCRIPT
+    # ============================================================================
+    
+    - name: Create rollback script directory
+      file:
+        path: /root/rollback_scripts
+        state: directory
+        owner: root
+        group: root
+        mode: '0700'
+      when:
+        - ssh_vpn_only_enabled
+        - create_rollback_script
+    
+    - name: Create emergency rollback script
+      copy:
+        dest: /root/rollback_scripts/rollback_ssh_vpn_only.sh
+        owner: root
+        group: root
+        mode: '0700'
+        content: |
+          #!/bin/bash
+          # Emergency Rollback Script for SSH VPN-Only Configuration
+          # Created: {{ ansible_date_time.iso8601 }}
+          # Use this script via Vultr web console if locked out
+          
+          echo "=== Emergency SSH Rollback ==="
+          echo "Restoring SSH to accept connections from all interfaces..."
+          
+          # Restore SSH configuration
+          if [ -f /etc/ssh/sshd_config.backup.{{ backup_suffix }} ]; then
+              cp /etc/ssh/sshd_config.backup.{{ backup_suffix }} /etc/ssh/sshd_config
+              echo "✓ Restored SSH configuration"
+          else
+              echo "✗ Backup not found, manually editing..."
+              sed -i 's/^ListenAddress {{ vpn_ip }}:{{ ssh_port }}/#ListenAddress {{ vpn_ip }}:{{ ssh_port }}/' /etc/ssh/sshd_config
+              sed -i 's/^#Port {{ ssh_port }}/Port {{ ssh_port }}/' /etc/ssh/sshd_config
+          fi
+          
+          # Restart SSH
+          systemctl restart sshd
+          echo "✓ SSH service restarted"
+          
+          # Restore firewall
+          ufw delete allow from {{ vpn_network }} to any port {{ ssh_port }}
+          ufw allow {{ ssh_port }}/tcp
+          echo "✓ Firewall restored"
+          
+          echo ""
+          echo "✓ Rollback complete!"
+          echo "You can now SSH from public IP: ssh -p {{ ssh_port }} phalkonadmin@{{ ansible_host }}"
+      when:
+        - ssh_vpn_only_enabled
+        - create_rollback_script
+    
+    - name: Display rollback script location
+      debug:
+        msg:
+          - "=== Emergency Rollback Script Created ==="
+          - "Location: /root/rollback_scripts/rollback_ssh_vpn_only.sh"
+          - ""
+          - "If locked out, use Vultr web console:"
+          - "  1. Login as root (password from cucho1.phalkons.com.secret)"
+          - "  2. Run: bash /root/rollback_scripts/rollback_ssh_vpn_only.sh"
+          - "  3. SSH access will be restored to public IP"
+      when:
+        - ssh_vpn_only_enabled
+        - create_rollback_script
+    
+    # ============================================================================
+    # PHASE 3: CONFIGURE SYSTEMD DEPENDENCY
+    # ============================================================================
+    
+    - name: Create systemd drop-in directory for SSH
+      file:
+        path: /etc/systemd/system/ssh.service.d
+        state: directory
+        owner: root
+        group: root
+        mode: '0755'
+      when:
+        - ssh_vpn_only_enabled
+        - configure_systemd_dependency
+    
+    - name: Configure SSH to depend on WireGuard
+      copy:
+        dest: /etc/systemd/system/ssh.service.d/wireguard-dependency.conf
+        owner: root
+        group: root
+        mode: '0644'
+        content: |
+          # SSH Dependency on WireGuard
+          # Created by Ansible - Task 1.3.4
+          # {{ ansible_date_time.iso8601 }}
+          
+          [Unit]
+          # Start SSH only after WireGuard is up
+          After={{ wireguard_service }}.service
+          Wants={{ wireguard_service }}.service
+          
+          # If WireGuard fails, SSH will still start but won't be accessible
+          # This prevents complete lockout
+      when:
+        - ssh_vpn_only_enabled
+        - configure_systemd_dependency
+      notify: Reload systemd and restart SSH
+    
+    # ============================================================================
+    # PHASE 4: CONFIGURE SSH TO LISTEN ON VPN IP ONLY
+    # ============================================================================
+    
+    - name: Backup current SSH configuration
+      copy:
+        src: /etc/ssh/sshd_config
+        dest: "/etc/ssh/sshd_config.backup.{{ backup_suffix }}"
+        remote_src: true
+        owner: root
+        group: root
+        mode: '0600'
+      when: ssh_vpn_only_enabled
+    
+    - name: Configure SSH to listen on VPN IP only
+      lineinfile:
+        path: /etc/ssh/sshd_config
+        regexp: '^#?Port '
+        line: "ListenAddress {{ vpn_ip }}:{{ ssh_port }}"
+        state: present
+        backup: false
+      when: ssh_vpn_only_enabled
+      notify: Restart SSH
+    
+    - name: Validate SSH configuration
+      command: sshd -t
+      changed_when: false
+      when: ssh_vpn_only_enabled
+    
+    # ============================================================================
+    # PHASE 5: UPDATE FIREWALL RULES
+    # ============================================================================
+    
+    - name: Get current UFW rules
+      command: ufw status numbered
+      register: ufw_rules
+      changed_when: false
+      when: ssh_vpn_only_enabled
+    
+    - name: Remove public SSH access from firewall
+      command: "ufw --force delete allow {{ ssh_port }}/tcp"
+      when:
+        - ssh_vpn_only_enabled
+        - "'2288/tcp' in ufw_rules.stdout"
+        - "'ALLOW IN    Anywhere' in ufw_rules.stdout"
+      register: ufw_delete
+      failed_when: false
+    
+    - name: Allow SSH only from VPN network
+      ufw:
+        rule: allow
+        port: "{{ ssh_port }}"
+        proto: tcp
+        from_ip: "{{ vpn_network }}"
+      when: ssh_vpn_only_enabled
+    
+    - name: Display firewall status
+      command: ufw status numbered
+      register: ufw_status_result
+      changed_when: false
+      when: ssh_vpn_only_enabled
+    
+    - name: Show firewall rules
+      debug:
+        var: ufw_status_result.stdout_lines
+      when: ssh_vpn_only_enabled
+    
+    # ============================================================================
+    # PHASE 6: VERIFICATION
+    # ============================================================================
+    
+    - name: Wait for SSH to restart
+      wait_for:
+        port: "{{ ssh_port }}"
+        host: "{{ vpn_ip }}"
+        delay: 2
+        timeout: 30
+      when: ssh_vpn_only_enabled
+    
+    - name: Display final summary
+      debug:
+        msg:
+          - "=== SSH VPN-Only Configuration Complete ==="
+          - ""
+          - "✓ Systemd Dependency: SSH starts after WireGuard"
+          - "✓ SSH Listen Address: {{ vpn_ip }}:{{ ssh_port }}"
+          - "✓ Firewall: SSH allowed only from {{ vpn_network }}"
+          - "✓ Public SSH access: BLOCKED"
+          - ""
+          - "IMPORTANT - New SSH Connection:"
+          - "  ssh -p {{ ssh_port }} -o IdentitiesOnly=yes -i ~/SSH_KEYS_CAPITAN_TO_WORKERS/id_ed25519_common phalkonadmin@{{ vpn_ip }}"
+          - ""
+          - "⚠️  SSH from public IP ({{ ansible_host }}) will NO LONGER WORK!"
+          - ""
+          - "Emergency Recovery:"
+          - "  - Use Vultr web console (root access)"
+          - "  - Run: /root/rollback_scripts/rollback_ssh_vpn_only.sh"
+          - ""
+          - "Backup Files:"
+          - "  - SSH Config: /etc/ssh/sshd_config.backup.{{ backup_suffix }}"
+          - "  - Rollback Script: /root/rollback_scripts/rollback_ssh_vpn_only.sh"
+          - ""
+          - "For Future Ansible Tasks:"
+          - "  export ANSIBLE_REMOTE_PORT={{ ssh_port }}"
+          - "  export ANSIBLE_REMOTE_USER=phalkonadmin"
+          - "  export ANSIBLE_PRIVATE_KEY_FILE=~/SSH_KEYS_CAPITAN_TO_WORKERS/id_ed25519_common"
+          - "  export ANSIBLE_HOST={{ vpn_ip }}  # ← NEW: Use VPN IP"
+      when: ssh_vpn_only_enabled
+  
+  handlers:
+    - name: Reload systemd and restart SSH
+      systemd:
+        daemon_reload: true
+        name: ssh
+        state: restarted
+    
+    - name: Restart SSH
+      systemd:
+        name: ssh
+        state: restarted
