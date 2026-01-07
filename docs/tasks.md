@@ -155,7 +155,7 @@ export ANSIBLE_SSH_PORT=2288
 
 ### **Task Group 1.3: System Hardening**
 
-**Status:** [▓░░░░] 20% Complete (1 of 5 tasks complete)
+**Status:** [▓▓▓░░] 60% Complete (3 of 5 tasks complete)
 
 #### **Tasks:**
 
@@ -174,23 +174,48 @@ export ANSIBLE_SSH_PORT=2288
     - Security banner added
     - Configuration backed up
 
-- [ ] **Task 1.3.2:** Integrate VPS into WireGuard VPN (10.100.0.0/24)
+- [x] **Task 1.3.2:** Integrate VPS into WireGuard VPN (10.100.0.0/24)
 
   - _Estimate:_ 45 minutes
   - _Dependencies:_ 1.3.1
-  - _Assigned to:_
-  - _Completed on:_
+  - _Automation:_ Ansible playbook `task_1.3.2.yml` → `install_wireguard.yml`
+  - _Assigned to:_ GMCE
+  - _Completed on:_ 2025-01-07
+  - _Notes:_ VPN IP 10.100.0.25/24, connected to peer 144.202.76.243:51820
+  - _What was done:_
+    - Install WireGuard and wireguard-tools packages
+    - Deploy wg0.conf configuration with VPN IP 10.100.0.25/24
+    - Configure peer connection to 144.202.76.243:51820
+    - Enable IP forwarding for VPN routing
+    - Start and enable WireGuard service at boot
+    - Credential extraction script created (setup_wg_credentials.sh)
 
 - [ ] **Task 1.3.3:** Configure network interfaces and DNS resolution
 
   - _Estimate:_ 30 minutes
   - _Dependencies:_ 1.3.2
+  - _Automation:_ Ansible playbook `task_1.3.3.yml` → `verify_network_interfaces.yml`
+  - _What it does:_
+    - Verify WireGuard interface (wg0) is up with correct IP
+    - Check routing tables for VPN and default routes
+    - Validate network interface metrics
+    - Test VPN connectivity (ping 10.100.0.1)
+    - Test internet connectivity
+    - Document network configuration
+    - DNS configuration skipped (to be done when proper DNS server is installed)
   - _Assigned to:_
   - _Completed on:_
 
-- [ ] **Task 1.3.4:** Create start dependency on ssh after wireguard is up
+- [ ] **Task 1.3.4:** Create start dependency on ssh after wireguard is up + Restrict SSH to VPN only
   - _Estimate:_ 30 minutes
   - _Dependencies:_ 1.3.3
+  - _Security Note:_ **CRITICAL** - After this task, SSH will ONLY be accessible via VPN (10.100.0.25)
+  - _What it does:_
+    - Configure systemd to start SSH only after WireGuard is up
+    - Restrict SSH to listen only on WireGuard interface (10.100.0.25:2288)
+    - Update UFW to allow SSH only from VPN network (10.100.0.0/24)
+    - Remove public SSH access (blocks SSH from internet)
+    - Add safety check to prevent lockout
   - _Assigned to:_
   - _Completed on:_
 

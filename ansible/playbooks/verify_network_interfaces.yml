@@ -1,0 +1,200 @@
+---
+# Reusable Playbook: Verify Network Interfaces
+# Purpose: Verify network interface configuration and routing
+# Parameters:
+#   - verify_enabled: Enable verification (default: true)
+#   - wireguard_interface: WireGuard interface name (default: wg0)
+#   - expected_vpn_ip: Expected VPN IP address
+#   - expected_vpn_network: Expected VPN network (CIDR)
+#   - detect_public_interface: Auto-detect public interface (default: true)
+#   - configure_dns: Configure DNS (default: false)
+#
+# Version: 1.0
+# Created: 2025-01-07
+
+- name: Verify Network Interfaces
+  hosts: mail_server
+  become: true
+  gather_facts: true
+  
+  vars:
+    verify_enabled: true
+    wireguard_interface: "wg0"
+    expected_vpn_ip: "10.100.0.25"
+    expected_vpn_network: "10.100.0.0/24"
+    detect_public_interface: true
+    configure_dns: false
+  
+  tasks:
+    # ============================================================================
+    # PHASE 1: INTERFACE VERIFICATION
+    # ============================================================================
+    
+    - name: Display network verification info
+      debug:
+        msg:
+          - "=== Network Interface Verification ==="
+          - "WireGuard Interface: {{ wireguard_interface }}"
+          - "Expected VPN IP: {{ expected_vpn_ip }}"
+          - "Expected VPN Network: {{ expected_vpn_network }}"
+          - "DNS Configuration: {{ 'Enabled' if configure_dns else 'Skipped (to be configured later)' }}"
+    
+    - name: Check if WireGuard interface exists
+      command: ip link show {{ wireguard_interface }}
+      register: wg_interface_check
+      changed_when: false
+      failed_when: wg_interface_check.rc != 0
+      when: verify_enabled
+    
+    - name: Get WireGuard interface details
+      command: ip addr show {{ wireguard_interface }}
+      register: wg_interface_details
+      changed_when: false
+      when: verify_enabled
+    
+    - name: Display WireGuard interface
+      debug:
+        var: wg_interface_details.stdout_lines
+      when: verify_enabled
+    
+    - name: Verify WireGuard IP address
+      assert:
+        that:
+          - "expected_vpn_ip in wg_interface_details.stdout"
+        fail_msg: "WireGuard interface does not have expected IP {{ expected_vpn_ip }}"
+        success_msg: "✓ WireGuard interface has correct IP: {{ expected_vpn_ip }}"
+      when: verify_enabled
+    
+    # ============================================================================
+    # PHASE 2: ROUTING VERIFICATION
+    # ============================================================================
+    
+    - name: Get routing table
+      command: ip route show
+      register: routing_table
+      changed_when: false
+      when: verify_enabled
+    
+    - name: Display routing table
+      debug:
+        msg:
+          - "=== Routing Table ==="
+          - "{{ routing_table.stdout_lines }}"
+      when: verify_enabled
+    
+    - name: Verify VPN route exists
+      assert:
+        that:
+          - "expected_vpn_network in routing_table.stdout"
+        fail_msg: "VPN route {{ expected_vpn_network }} not found in routing table"
+        success_msg: "✓ VPN route exists for {{ expected_vpn_network }}"
+      when: verify_enabled
+    
+    - name: Get default gateway
+      shell: ip route show default | head -1
+      register: default_gateway
+      changed_when: false
+      when: verify_enabled
+    
+    - name: Display default gateway
+      debug:
+        msg: "Default Gateway: {{ default_gateway.stdout }}"
+      when: verify_enabled
+    
+    # ============================================================================
+    # PHASE 3: PUBLIC INTERFACE DETECTION
+    # ============================================================================
+    
+    - name: Detect public network interface
+      shell: ip route show default | head -1 | awk '{print $5}'
+      register: public_interface
+      changed_when: false
+      when:
+        - verify_enabled
+        - detect_public_interface
+    
+    - name: Get public interface details
+      command: "ip addr show {{ public_interface.stdout }}"
+      register: public_interface_details
+      changed_when: false
+      when:
+        - verify_enabled
+        - detect_public_interface
+        - public_interface.stdout != ""
+    
+    - name: Display public interface
+      debug:
+        msg:
+          - "=== Public Interface ==="
+          - "Interface: {{ public_interface.stdout }}"
+          - "{{ public_interface_details.stdout_lines }}"
+      when:
+        - verify_enabled
+        - detect_public_interface
+        - public_interface.stdout != ""
+    
+    # ============================================================================
+    # PHASE 4: CONNECTIVITY TESTING
+    # ============================================================================
+    
+    - name: Test VPN connectivity (ping VPN gateway)
+      command: ping -c 3 -W 2 10.100.0.1
+      register: vpn_ping
+      changed_when: false
+      failed_when: false
+      when: verify_enabled
+    
+    - name: Display VPN connectivity result
+      debug:
+        msg: "{{ '✓ VPN connectivity: SUCCESS' if vpn_ping.rc == 0 else '✗ VPN connectivity: FAILED (VPN gateway may not respond to ping)' }}"
+      when: verify_enabled
+    
+    - name: Test internet connectivity
+      command: ping -c 3 -W 2 8.8.8.8
+      register: internet_ping
+      changed_when: false
+      failed_when: false
+      when: verify_enabled
+    
+    - name: Display internet connectivity result
+      debug:
+        msg: "{{ '✓ Internet connectivity: SUCCESS' if internet_ping.rc == 0 else '✗ Internet connectivity: FAILED' }}"
+      when: verify_enabled
+    
+    # ============================================================================
+    # PHASE 5: NETWORK INTERFACE SUMMARY
+    # ============================================================================
+    
+    - name: Get all network interfaces
+      command: ip link show
+      register: all_interfaces
+      changed_when: false
+      when: verify_enabled
+    
+    - name: Display network summary
+      debug:
+        msg:
+          - "=== Network Configuration Summary ==="
+          - ""
+          - "WireGuard Interface:"
+          - "  - Interface: {{ wireguard_interface }}"
+          - "  - IP: {{ expected_vpn_ip }}/24"
+          - "  - Network: {{ expected_vpn_network }}"
+          - "  - Status: UP"
+          - ""
+          - "Public Interface:"
+          - "  - Interface: {{ public_interface.stdout | default('N/A') }}"
+          - "  - Status: UP"
+          - ""
+          - "Routing:"
+          - "  - VPN Route: {{ expected_vpn_network }} via {{ wireguard_interface }}"
+          - "  - Default Gateway: {{ default_gateway.stdout }}"
+          - ""
+          - "Connectivity:"
+          - "  - VPN (10.100.0.1): {{ '✓ OK' if vpn_ping.rc == 0 else '✗ FAILED' }}"
+          - "  - Internet (8.8.8.8): {{ '✓ OK' if internet_ping.rc == 0 else '✗ FAILED' }}"
+          - ""
+          - "DNS Configuration: Skipped (to be configured when DNS server is installed)"
+          - ""
+          - "Next Step: Task 1.3.4 - Configure SSH to depend on WireGuard and restrict to VPN only"
+      when: verify_enabled

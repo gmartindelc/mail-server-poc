@@ -1601,3 +1601,333 @@ source ~/.bashrc
 - User: root → phalkonadmin
 - Key: Vultr key → Bastion key (common worker key)
 
+
+---
+
+### Task 1.3.2 - Integrate VPS into WireGuard VPN
+
+**Playbook:** `task_1.3.2.yml`  
+**Reusable Playbook:** `playbooks/install_wireguard.yml`  
+**Duration:** ~45 seconds  
+**Dependencies:** Task 1.3.1 (SSH hardening complete)
+
+**What it does:**
+
+1. **WireGuard Installation:**
+   - Installs WireGuard and wireguard-tools packages
+   - Creates `/etc/wireguard` directory with secure permissions (700)
+
+2. **VPN Configuration:**
+   - Deploys wg0.conf with VPN IP 10.100.0.19/24
+   - Configures peer connection to 144.202.76.243:51820
+   - Sets allowed IPs: 10.100.0.0/24 (full VPN subnet)
+   - Enables persistent keepalive (25 seconds)
+   - Secures private key with 600 permissions
+
+3. **Network Configuration:**
+   - Enables IP forwarding for VPN routing
+   - Configures sysctl for packet forwarding
+
+4. **Service Management:**
+   - Enables wg-quick@wg0 service at boot
+   - Starts WireGuard VPN connection
+   - Verifies connectivity
+
+**Prerequisites - Setup Credentials:**
+
+Before running this task, extract credentials from wg0.conf:
+
+```bash
+cd ansible
+
+# Place your wg0.conf file here, then run:
+./setup_wg_credentials.sh wg0.conf
+```
+
+This will:
+- Create `../wg_credentials/` directory (700 permissions)
+- Extract private key, address, peer info
+- Update .gitignore to protect secrets
+- Set secure file permissions (600)
+
+**Command:**
+```bash
+export ANSIBLE_REMOTE_PORT=2288
+export ANSIBLE_REMOTE_USER=phalkonadmin
+export ANSIBLE_PRIVATE_KEY_FILE=~/SSH_KEYS_CAPITAN_TO_WORKERS/id_ed25519_common
+
+# Dry run first
+./run_task.sh 1.3.2 --check
+
+# Real execution
+./run_task.sh 1.3.2
+```
+
+**Files Created:**
+- `task_1.3.2.yml` - Task wrapper
+- `playbooks/install_wireguard.yml` - Reusable WireGuard playbook
+- `playbooks/templates/wg0.conf.j2` - WireGuard configuration template
+- `setup_wg_credentials.sh` - Credential extraction script
+- `../wg_credentials/private_key` - Private key (protected by .gitignore)
+- `../wg_credentials/address` - VPN address
+- `../wg_credentials/peer_public_key` - Peer's public key
+- `../wg_credentials/endpoint` - Peer endpoint
+- `/etc/wireguard/wg0.conf` - WireGuard config (on server)
+- `/etc/wireguard/wg0.conf.backup.TIMESTAMP` - Backup (if exists)
+
+---
+
+#### WireGuard Configuration Details
+
+**Interface Settings:**
+```
+Interface: wg0
+Address: 10.100.0.19/24
+Private Key: (from wg_credentials/private_key)
+```
+
+**Peer Settings:**
+```
+Public Key: /fKlGm12NBYEA6dNy/EYLYOKKRdQTfKlFIHpSmsNEwQ=
+Endpoint: 144.202.76.243:51820
+Allowed IPs: 10.100.0.0/24
+Persistent Keepalive: 25 seconds
+```
+
+**Service:**
+```
+Service Name: wg-quick@wg0
+Enabled at Boot: Yes
+Configuration: /etc/wireguard/wg0.conf
+```
+
+---
+
+#### WireGuard Verification
+
+**Check WireGuard status:**
+```bash
+ssh -p 2288 -o IdentitiesOnly=yes -i ~/SSH_KEYS_CAPITAN_TO_WORKERS/id_ed25519_common \
+    phalkonadmin@45.32.207.84 'sudo wg show'
+```
+
+**Expected Output:**
+```
+interface: wg0
+  public key: (your public key)
+  private key: (hidden)
+  listening port: (random port)
+
+peer: /fKlGm12NBYEA6dNy/EYLYOKKRdQTfKlFIHpSmsNEwQ=
+  endpoint: 144.202.76.243:51820
+  allowed ips: 10.100.0.0/24
+  latest handshake: (time since last handshake)
+  transfer: (bytes sent/received)
+  persistent keepalive: every 25 seconds
+```
+
+**Check WireGuard interface:**
+```bash
+ssh -p 2288 -o IdentitiesOnly=yes -i ~/SSH_KEYS_CAPITAN_TO_WORKERS/id_ed25519_common \
+    phalkonadmin@45.32.207.84 'ip addr show wg0'
+```
+
+**Expected Output:**
+```
+X: wg0: <POINTOPOINT,NOARP,UP,LOWER_UP> mtu 1420 qdisc noqueue state UNKNOWN group default qlen 1000
+    link/none 
+    inet 10.100.0.19/24 scope global wg0
+       valid_lft forever preferred_lft forever
+```
+
+**Test VPN connectivity:**
+```bash
+# Ping another VPN member (if available)
+ssh -p 2288 -o IdentitiesOnly=yes -i ~/SSH_KEYS_CAPITAN_TO_WORKERS/id_ed25519_common \
+    phalkonadmin@45.32.207.84 'ping -c 3 10.100.0.1'
+```
+
+---
+
+#### WireGuard Useful Commands
+
+**View WireGuard status:**
+```bash
+sudo wg show
+sudo wg show wg0
+```
+
+**View detailed interface info:**
+```bash
+sudo wg show all
+```
+
+**Restart WireGuard:**
+```bash
+sudo systemctl restart wg-quick@wg0
+```
+
+**Stop WireGuard:**
+```bash
+sudo systemctl stop wg-quick@wg0
+```
+
+**Start WireGuard:**
+```bash
+sudo systemctl start wg-quick@wg0
+```
+
+**Check WireGuard service status:**
+```bash
+sudo systemctl status wg-quick@wg0
+```
+
+**View WireGuard logs:**
+```bash
+sudo journalctl -u wg-quick@wg0 -n 50
+sudo journalctl -u wg-quick@wg0 -f
+```
+
+**View configuration:**
+```bash
+sudo cat /etc/wireguard/wg0.conf
+```
+
+**Check if interface is up:**
+```bash
+ip link show wg0
+ip addr show wg0
+```
+
+---
+
+#### Troubleshooting WireGuard
+
+**Issue: WireGuard not starting**
+
+```bash
+# Check service status
+sudo systemctl status wg-quick@wg0
+
+# Check configuration syntax
+sudo wg-quick up wg0
+# If errors, check /etc/wireguard/wg0.conf
+
+# View detailed logs
+sudo journalctl -u wg-quick@wg0 -n 100
+```
+
+**Issue: No handshake with peer**
+
+```bash
+# Check if peer endpoint is reachable
+ping 144.202.76.243
+
+# Check if port 51820 is open (from peer side)
+# Check firewall allows UDP traffic
+
+# Check configuration
+sudo wg show wg0
+
+# Restart WireGuard
+sudo systemctl restart wg-quick@wg0
+```
+
+**Issue: Interface has no IP address**
+
+```bash
+# Check configuration
+sudo cat /etc/wireguard/wg0.conf
+# Verify Address line exists
+
+# Manually bring up interface
+sudo wg-quick down wg0
+sudo wg-quick up wg0
+
+# Check interface
+ip addr show wg0
+```
+
+**Issue: Cannot reach other VPN members**
+
+```bash
+# Check allowed IPs
+sudo wg show wg0
+
+# Check routing
+ip route show
+
+# Check if IP forwarding is enabled
+cat /proc/sys/net/ipv4/ip_forward
+# Should be: 1
+
+# Enable if needed
+sudo sysctl -w net.ipv4.ip_forward=1
+```
+
+**Issue: Credentials not found**
+
+```bash
+# Run credential setup script
+cd ansible
+./setup_wg_credentials.sh wg0.conf
+
+# Verify files exist
+ls -la ../wg_credentials/
+cat ../wg_credentials/private_key
+```
+
+---
+
+#### Security Notes for WireGuard
+
+**Credential Protection:**
+- ✅ Private keys stored in `../wg_credentials/` (700 permissions)
+- ✅ Individual files have 600 permissions (rw-------)
+- ✅ Protected by .gitignore
+- ✅ Never committed to git
+- ✅ Original wg0.conf also protected
+
+**Configuration File:**
+- `/etc/wireguard/wg0.conf` has 600 permissions
+- Only root can read/write
+- Contains private key (never share)
+
+**Network Security:**
+- Encrypted tunnel using modern cryptography
+- Peer authentication via public keys
+- No password-based authentication
+- All VPN traffic encrypted
+
+**Best Practices:**
+- Keep private keys secure
+- Rotate keys periodically
+- Monitor for unauthorized connections
+- Use persistent keepalive for NAT traversal
+
+---
+
+#### After Task 1.3.2 Completion
+
+**VPN Access:**
+- Server is now accessible via VPN at: `10.100.0.19`
+- Can be used for internal services (PostgreSQL, etc.)
+- SSH can be restricted to VPN-only (Task 1.3.4)
+
+**Network Configuration:**
+- VPN subnet: 10.100.0.0/24
+- Server VPN IP: 10.100.0.19
+- Peer endpoint: 144.202.76.243:51820
+
+**Next Steps:**
+- Task 1.3.3: Configure network interfaces and DNS
+- Task 1.3.4: Make SSH depend on WireGuard (VPN-only SSH)
+- Task 1.4.x: Continue with directory structure setup
+
+---
+
+**Task Version:** 1.0  
+**Last Updated:** 2025-01-07  
+**Status:** ✅ Ready for Testing  
+**Tested With:** Debian 13, Ansible 2.19.5
+

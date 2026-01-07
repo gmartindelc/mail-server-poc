@@ -1,0 +1,20 @@
+# WireGuard Configuration
+# Managed by Ansible - Task 1.3.2
+# Generated: {{ ansible_date_time.iso8601 }}
+# Interface: {{ wireguard_interface }}
+
+[Interface]
+PrivateKey = {{ wireguard_private_key }}
+Address = {{ wireguard_address }}
+{% if wireguard_listen_port %}
+ListenPort = {{ wireguard_listen_port }}
+{% endif %}
+{% if wireguard_dns %}
+DNS = {{ wireguard_dns }}
+{% endif %}
+
+[Peer]
+PublicKey = {{ wireguard_peer_public_key }}
+Endpoint = {{ wireguard_peer_endpoint }}
+AllowedIPs = {{ wireguard_peer_allowed_ips }}
+PersistentKeepalive = {{ wireguard_peer_persistent_keepalive }}

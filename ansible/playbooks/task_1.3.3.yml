@@ -1,0 +1,39 @@
+---
+# Task 1.3.3 - Configure Network Interfaces and DNS Resolution
+# Description: Verify network configuration and interface setup
+# Dependencies: Task 1.3.2 (WireGuard VPN active)
+# Duration: ~20 seconds
+#
+# What this task does:
+# 1. Verifies WireGuard interface is up and configured
+# 2. Checks routing tables
+# 3. Validates network interface metrics
+# 4. Documents current network configuration
+#
+# Note: DNS configuration is skipped for now (will be configured later
+#       when proper DNS server is installed)
+#
+# Task Group: 1.3 - System Hardening
+# Version: 1.0
+# Created: 2025-01-07
+
+- name: Task 1.3.3 - Configure Network Interfaces and DNS Resolution
+  import_playbook: verify_network_interfaces.yml
+  vars:
+    # Network Verification
+    verify_enabled: true
+    
+    # WireGuard Interface
+    wireguard_interface: "wg0"
+    expected_vpn_ip: "10.100.0.25"
+    expected_vpn_network: "10.100.0.0/24"
+    
+    # Public Interface (auto-detect)
+    detect_public_interface: true
+    
+    # DNS Configuration (skipped for now)
+    configure_dns: false
+    
+    # Task metadata
+    task_number: "1.3.3"
+    task_description: "Verify network interfaces and routing configuration"

@@ -26,5 +26,29 @@ Thumbs.db
 
 
 terraform_outputs_test.txt
-ansible/retry
+
+# WireGuard Configuration and Credentials
+wg0.conf
+wg*.conf
+wg_credentials/
+
+# Ansible Credentials
+*.secret
+
+# Ansible Runtime Files
+*.retry
+retry/
 ansible.log
+
+# Ansible Facts Cache
+/tmp/ansible_facts/
+
+# Backup Files
+*.backup.*
+
+# SSH Keys (if accidentally placed here)
+*.pem
+*.key
+id_rsa*
+id_ed25519*
+id_ecdsa*
