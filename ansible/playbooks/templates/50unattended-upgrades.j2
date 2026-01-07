@@ -1,0 +1,83 @@
+// Unattended-Upgrades Configuration
+// Managed by Ansible - Task 1.3.1
+// Generated: {{ ansible_date_time.iso8601 }}
+
+// Automatically upgrade packages from these (origin:archive) pairs
+Unattended-Upgrade::Allowed-Origins {
+    "${distro_id}:${distro_codename}-security";
+    "${distro_id}ESMApps:${distro_codename}-apps-security";
+    "${distro_id}ESM:${distro_codename}-infra-security";
+};
+
+// Python regular expressions, matching packages to exclude from upgrading
+Unattended-Upgrade::Package-Blacklist {
+    // The following matches all packages starting with linux-
+    //"linux-";
+};
+
+// This option controls whether the development release of Ubuntu will be
+// upgraded automatically. Valid values are "true", "false", and "auto".
+Unattended-Upgrade::DevRelease "auto";
+
+// Do automatic removal of unused kernel packages after the upgrade
+Unattended-Upgrade::Remove-Unused-Kernel-Packages "true";
+
+// Do automatic removal of newly unused dependencies after the upgrade
+Unattended-Upgrade::Remove-New-Unused-Dependencies "true";
+
+// Do automatic removal of unused packages after the upgrade
+// (equivalent to apt-get autoremove)
+Unattended-Upgrade::Remove-Unused-Dependencies "true";
+
+// Automatically reboot *WITHOUT CONFIRMATION* if the file
+// /var/run/reboot-required is found after the upgrade
+Unattended-Upgrade::Automatic-Reboot "{{ unattended_upgrades_auto_reboot | lower }}";
+
+// Automatically reboot even if there are users currently logged in
+// when Unattended-Upgrade::Automatic-Reboot is set to true
+Unattended-Upgrade::Automatic-Reboot-WithUsers "false";
+
+// If automatic reboot is enabled and needed, reboot at the specific
+// time instead of immediately
+{% if unattended_upgrades_auto_reboot %}
+Unattended-Upgrade::Automatic-Reboot-Time "{{ unattended_upgrades_auto_reboot_time }}";
+{% else %}
+//Unattended-Upgrade::Automatic-Reboot-Time "{{ unattended_upgrades_auto_reboot_time }}";
+{% endif %}
+
+// Send email to this address for problems or packages upgrades
+// If empty or unset then no email is sent, make sure that you
+// have a working mail setup on your system. A package that provides
+// 'mailx' must be installed.
+//Unattended-Upgrade::Mail "";
+
+// Set this value to one of:
+//    "always", "only-on-error" or "on-change"
+// If this is not set, then any legacy MailOnlyOnError (boolean) value
+// is used to chose between "only-on-error" and "on-change"
+//Unattended-Upgrade::MailReport "on-change";
+
+// Download and install upgrades only on AC power
+// (i.e. skip or gracefully stop updates on battery)
+Unattended-Upgrade::OnlyOnACPower "false";
+
+// Download and install upgrades only on non-metered connection
+// (i.e. skip or gracefully stop updates on a metered connection)
+Unattended-Upgrade::Skip-Updates-On-Metered-Connections "false";
+
+// Verbose logging
+Unattended-Upgrade::Verbose "false";
+
+// Print debugging information both in unattended-upgrades and
+// in unattended-upgrade-shutdown
+Unattended-Upgrade::Debug "false";
+
+// Allow package downgrade if Pin-Priority exceeds 1000
+// Unattended-Upgrade::Allow-downgrade "false";
+
+// When APT fails to mark a package to be upgraded or installed try adjusting
+// candidates of related packages to help APT's resolver in finding a solution
+// where the package can be upgraded or installed.
+// This is a workaround until APT's resolver is fixed to always find a
+// solution if it exists. (See LP: #711128 for more information)
+// Unattended-Upgrade::Allow-APT-Mark-Fallback "true";

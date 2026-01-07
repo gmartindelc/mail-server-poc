@@ -1,0 +1,47 @@
+---
+# Task 1.3.5 - Install and Configure Fail2ban
+# Description: Intrusion prevention system for SSH and other services
+# Dependencies: Task 1.3.1 (SSH hardening complete)
+# Duration: ~30-45 seconds
+#
+# What this task does:
+# 1. Installs fail2ban package
+# 2. Configures fail2ban for SSH on port 2288
+# 3. Sets ban time, find time, and max retry limits
+# 4. Enables and starts fail2ban service
+# 5. Configures email notifications (optional)
+#
+# Task Group: 1.3 - System Hardening
+# Version: 1.0
+# Created: 2025-01-07
+
+- name: Task 1.3.5 - Install and Configure Fail2ban
+  import_playbook: install_fail2ban.yml
+  vars:
+    # Fail2ban Configuration
+    fail2ban_enabled: true
+    
+    # SSH Jail Configuration
+    fail2ban_ssh_enabled: true
+    fail2ban_ssh_port: 2288
+    fail2ban_ssh_maxretry: 3
+    fail2ban_ssh_findtime: 600     # 10 minutes
+    fail2ban_ssh_bantime: 3600      # 1 hour
+    
+    # Global Configuration
+    fail2ban_bantime: 3600          # Default ban time: 1 hour
+    fail2ban_findtime: 600          # Default find time: 10 minutes
+    fail2ban_maxretry: 3            # Default max retries
+    
+    # Email notifications (optional - leave empty to disable)
+    fail2ban_destemail: ""          # Email address for notifications
+    fail2ban_sender: "fail2ban@{{ ansible_hostname }}"
+    fail2ban_mta: "sendmail"        # or "mail"
+    
+    # Logging
+    fail2ban_loglevel: "INFO"       # DEBUG, INFO, WARNING, ERROR
+    fail2ban_logtarget: "/var/log/fail2ban.log"
+    
+    # Task metadata
+    task_number: "1.3.5"
+    task_description: "Install and configure fail2ban intrusion prevention"

@@ -1,0 +1,48 @@
+---
+# Task 1.3.1 - Configure Basic System Hardening
+# Description: SSH hardening, firewall configuration, and automatic updates
+# Dependencies: Task 1.2.6 (Docker installed, phalkonadmin user exists)
+# Duration: ~60-90 seconds
+#
+# What this task does:
+# 1. Changes SSH port from 22 to 2288
+# 2. Disables root login and password authentication
+# 3. Configures UFW firewall (deny all incoming except SSH 2288)
+# 4. Installs and configures unattended-upgrades for automatic security updates
+#
+# IMPORTANT: After this task completes, SSH will only be accessible on port 2288
+#            with key authentication only. Root login will be disabled.
+#
+# Task Group: 1.3 - System Hardening
+# Version: 1.0
+# Created: 2025-01-07
+
+- name: Task 1.3.1 - Configure Basic System Hardening
+  import_playbook: system_hardening.yml
+  vars:
+    # SSH Configuration
+    ssh_port: 2288
+    ssh_permit_root_login: "no"
+    ssh_password_authentication: "no"
+    ssh_pubkey_authentication: "yes"
+    
+    # Firewall Configuration
+    ufw_enabled: true
+    ufw_default_incoming: "deny"
+    ufw_default_outgoing: "allow"
+    
+    # Allowed ports (only SSH on new port)
+    ufw_allowed_ports:
+      - "{{ ssh_port }}/tcp"
+    
+    # Denied ports (none for now)
+    ufw_denied_ports: []
+    
+    # Automatic Updates
+    unattended_upgrades_enabled: true
+    unattended_upgrades_auto_reboot: false
+    unattended_upgrades_auto_reboot_time: "03:00"
+    
+    # Task metadata
+    task_number: "1.3.1"
+    task_description: "Configure basic system hardening (SSH, firewall, updates)"

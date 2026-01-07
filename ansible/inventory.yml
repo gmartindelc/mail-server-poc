@@ -2,29 +2,44 @@
 # Ansible Inventory for Mail Server PoC
 # Location: ansible/inventory.yml
 #
-# IMPORTANT: This inventory expects the credential file to be parsed BEFORE running Ansible.
-# The run_task.sh and run_all_tasks.sh scripts handle this automatically.
+# IMPORTANT: This inventory uses environment variables for dynamic configuration.
+# The run_task.sh script handles credential parsing automatically.
 #
-# For manual execution, set environment variables first:
-#   export MAIL_SERVER_IP=$(cut -d',' -f1 ../cucho1.phalkons.com.secret)
-#   export MAIL_SERVER_PASS=$(cut -d',' -f2 ../cucho1.phalkons.com.secret)
-#   ansible-playbook -i inventory.yml playbook.yml
+# Required environment variables:
+#   MAIL_SERVER_IP - Server IP (set by run_task.sh)
+#   MAIL_SERVER_PASS - Root password (set by run_task.sh)
 #
-# Or use the run scripts which do this automatically.
+# Optional environment variables (for tasks after 1.3.1):
+#   ANSIBLE_REMOTE_PORT - SSH port (default: 22, set to 2288 after Task 1.3.1)
+#   ANSIBLE_REMOTE_USER - SSH user (default: root, set to phalkonadmin after Task 1.3.1)
+#   ANSIBLE_PRIVATE_KEY_FILE - SSH key path (default: Vultr key, set to bastion key after Task 1.3.1)
 
 all:
   children:
     mail_servers:
       hosts:
         mail_server:
-          # These variables are set by the run scripts or environment
-          # If running manually, you must export MAIL_SERVER_IP and MAIL_SERVER_PASS
+          # Server connection details (set by run_task.sh)
           ansible_host: "{{ lookup('env', 'MAIL_SERVER_IP') }}"
-          ansible_user: root
+          
+          # SSH Port - dynamic based on task phase
+          # Tasks 1.1.x - 1.3.1: port 22
+          # Tasks 1.3.2+: port 2288 (export ANSIBLE_REMOTE_PORT=2288)
+          ansible_port: "{{ lookup('env', 'ANSIBLE_REMOTE_PORT') | default('22', true) }}"
+          
+          # SSH User - dynamic based on task phase
+          # Tasks 1.1.x - 1.3.1: root
+          # Tasks 1.3.2+: phalkonadmin (export ANSIBLE_REMOTE_USER=phalkonadmin)
+          ansible_user: "{{ lookup('env', 'ANSIBLE_REMOTE_USER') | default('root', true) }}"
+          
+          # SSH Authentication
           ansible_ssh_pass: "{{ lookup('env', 'MAIL_SERVER_PASS') }}"
           
-          # Using Vultr key for local machine access (PoC phase)
-          ansible_ssh_private_key_file: ~/.ssh/id_ed25519_lc02_vultr
+          # SSH Key - dynamic based on task phase
+          # Tasks 1.1.x - 1.3.1: Vultr key
+          # Tasks 1.3.2+: Bastion key (export ANSIBLE_PRIVATE_KEY_FILE=~/SSH_KEYS_CAPITAN_TO_WORKERS/id_ed25519_common)
+          ansible_ssh_private_key_file: "{{ lookup('env', 'ANSIBLE_PRIVATE_KEY_FILE') | default('~/.ssh/id_ed25519_lc02_vultr', true) }}"
+          
           ansible_python_interpreter: /usr/bin/python3
           
           # Server metadata
@@ -39,16 +54,12 @@ all:
           mail_domain: phalkons.com
           postgres_version: "17"
           
-          # SSH Keys Configuration
-          # Vultr key (for local machine access - already on VPS)
+          # SSH Keys paths (for reference)
           vultr_ssh_key: ~/.ssh/id_ed25519_lc02_vultr
-          
-          # Common worker key (for bastion access - to be deployed)
           bastion_ssh_key_public: ~/SSH_KEYS_CAPITAN_TO_WORKERS/id_ed25519_common.pub
           bastion_ssh_key_private: ~/SSH_KEYS_CAPITAN_TO_WORKERS/id_ed25519_common
           
   vars:
     # Global variables for all hosts
     ansible_connection: ssh
-    ansible_port: 22
     ansible_ssh_common_args: '-o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=/dev/null'

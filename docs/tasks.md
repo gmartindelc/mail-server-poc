@@ -1,10 +1,37 @@
 # Mail Server Cluster PoC - Task Tracking
 
-**Last Updated:** 2025-01-05  
-**Current Phase:** Milestone 1 - Environment Setup & Foundation (Task Group 1.2 Complete)  
-**Status:** ✅ Task Group 1.2 Complete - Ready for Task Group 1.3
+**Last Updated:** 2025-01-07  
+**Current Phase:** Milestone 1 - Environment Setup & Foundation (Task 1.3.1 Complete)  
+**Status:** ✅ Task 1.3.1 Complete - Task Group 1.3 in progress
 
-## Recent Session Summary (2025-01-05)
+## Recent Session Summary (2025-01-07)
+
+**Completed:** Task 1.3.1 - Configure Basic System Hardening  
+**Status:** SSH hardening, UFW firewall, and automatic updates configured  
+**Next Action:** Tasks 1.3.2-1.3.4 (WireGuard VPN integration), then Task 1.3.5 (fail2ban)
+
+**Key Achievements:**
+
+- SSH hardened: Port 2288, key-only auth, root login disabled
+- UFW firewall enabled with default-deny policy
+- Automatic security updates configured
+- Security banner added
+- Modern cryptography enforced (curve25519, ChaCha20-Poly1305)
+
+**Connection After Task 1.3.1:**
+```bash
+ssh -p 2288 -o IdentitiesOnly=yes -i ~/SSH_KEYS_CAPITAN_TO_WORKERS/id_ed25519_common phalkonadmin@45.32.207.84
+```
+
+**For Ansible (tasks 1.3.2+):**
+```bash
+export ANSIBLE_SSH_PORT=2288
+./run_task.sh 1.3.x
+```
+
+---
+
+## Previous Session Summary (2025-01-05)
 
 **Completed:** Task Group 1.2 - System User Administration (all 7 tasks)  
 **Tasks Completed:** Tasks 1.2.1 through 1.2.7  
@@ -128,32 +155,24 @@
 
 ### **Task Group 1.3: System Hardening**
 
-**Status:** [ ]
+**Status:** [▓░░░░] 20% Complete (1 of 5 tasks complete)
 
 #### **Tasks:**
 
-- [ ] **Task 1.3.1:** Configure basic system hardening (SSH, firewall, updates)
+- [x] **Task 1.3.1:** Configure basic system hardening (SSH, firewall, updates)
 
   - _Estimate:_ 1 hour
   - _Dependencies:_ 1.2.6
-  - _Instructions:_
-    - Configure SSH hardening:
-      - Disable root login: `PermitRootLogin no`
-      - Use key authentication only: `PasswordAuthentication no`
-      - Change default port (required): `Port 2288`
-      - Disable port 22
-    - Configure firewall (UFW):
-      - Install: `sudo apt install ufw`
-      - Set defaults: `sudo ufw default deny incoming`, `sudo ufw default allow outgoing`
-      - Allow SSH: `sudo ufw allow 2288/tcp` (or custom port)
-      - Disable port 22: `sudo ufw deny 22/tcp`
-      - Enable: `sudo ufw enable`
-    - Configure automatic updates:
-      - Install: `sudo apt install unattended-upgrades`
-      - Configure: `sudo dpkg-reconfigure unattended-upgrades`
-    - Enable automatic security updates
-  - _Assigned to:_
-  - _Completed on:_
+  - _Automation:_ Ansible playbook `task_1.3.1.yml` → `system_hardening.yml`
+  - _Assigned to:_ GMCE
+  - _Completed on:_ 2025-01-07
+  - _Notes:_ SSH port changed to 2288, root login disabled, UFW firewall enabled, automatic updates configured
+  - _What was done:_
+    - SSH hardening: Port 2288, key-only auth, root disabled, modern crypto
+    - UFW firewall: Default deny incoming, allow 2288/tcp
+    - Automatic security updates: unattended-upgrades installed and configured
+    - Security banner added
+    - Configuration backed up
 
 - [ ] **Task 1.3.2:** Integrate VPS into WireGuard VPN (10.100.0.0/24)
 
@@ -172,6 +191,19 @@
 - [ ] **Task 1.3.4:** Create start dependency on ssh after wireguard is up
   - _Estimate:_ 30 minutes
   - _Dependencies:_ 1.3.3
+  - _Assigned to:_
+  - _Completed on:_
+
+- [ ] **Task 1.3.5:** Install and configure fail2ban for intrusion prevention
+  - _Estimate:_ 30 minutes
+  - _Dependencies:_ 1.3.1
+  - _Automation:_ Ansible playbook `task_1.3.5.yml` → `install_fail2ban.yml`
+  - _What it does:_
+    - Install fail2ban package
+    - Configure SSH jail monitoring port 2288
+    - Set ban policy: 3 attempts in 10 minutes = 1 hour ban
+    - Enable and start fail2ban service
+    - Configure logging to /var/log/fail2ban.log
   - _Assigned to:_
   - _Completed on:_
 

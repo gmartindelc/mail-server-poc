@@ -1,0 +1,268 @@
+---
+# Reusable Playbook: System Hardening
+# Purpose: Configure SSH hardening, firewall (UFW), and automatic security updates
+# Parameters:
+#   - ssh_port: SSH port number (default: 2288)
+#   - ssh_permit_root_login: Allow root login (default: "no")
+#   - ssh_password_authentication: Allow password auth (default: "no")
+#   - ssh_pubkey_authentication: Allow pubkey auth (default: "yes")
+#   - ufw_enabled: Enable UFW firewall (default: true)
+#   - ufw_default_incoming: Default incoming policy (default: "deny")
+#   - ufw_default_outgoing: Default outgoing policy (default: "allow")
+#   - ufw_allowed_ports: List of allowed ports (e.g., ["2288/tcp"])
+#   - ufw_denied_ports: List of explicitly denied ports (e.g., ["22/tcp"])
+#   - unattended_upgrades_enabled: Enable automatic updates (default: true)
+#   - unattended_upgrades_auto_reboot: Allow auto reboot (default: false)
+#   - unattended_upgrades_auto_reboot_time: Reboot time if needed (default: "03:00")
+#
+# Version: 1.0
+# Created: 2025-01-07
+
+- name: System Hardening Configuration
+  hosts: mail_server
+  become: true
+  gather_facts: true
+  
+  vars:
+    # Default values (can be overridden)
+    ssh_port: 2288
+    ssh_permit_root_login: "no"
+    ssh_password_authentication: "no"
+    ssh_pubkey_authentication: "yes"
+    ufw_enabled: true
+    ufw_default_incoming: "deny"
+    ufw_default_outgoing: "allow"
+    ufw_allowed_ports: []
+    ufw_denied_ports: []
+    unattended_upgrades_enabled: true
+    unattended_upgrades_auto_reboot: false
+    unattended_upgrades_auto_reboot_time: "03:00"
+    
+    # Backup suffix for SSH config
+    backup_suffix: "{{ ansible_date_time.iso8601_basic_short }}"
+  
+  tasks:
+    # ============================================================================
+    # PHASE 1: SSH HARDENING
+    # ============================================================================
+    
+    - name: Display SSH hardening configuration
+      debug:
+        msg:
+          - "=== SSH Hardening Configuration ==="
+          - "SSH Port: {{ ssh_port }}"
+          - "Allowed Users: phalkonadmin"
+          - "Root Login: {{ ssh_permit_root_login }}"
+          - "Password Auth: {{ ssh_password_authentication }}"
+          - "PubKey Auth: {{ ssh_pubkey_authentication }}"
+      
+    - name: Backup current SSH configuration
+      copy:
+        src: /etc/ssh/sshd_config
+        dest: "/etc/ssh/sshd_config.backup.{{ backup_suffix }}"
+        remote_src: true
+        owner: root
+        group: root
+        mode: '0600'
+      tags: ssh
+      
+    - name: Create SSH banner file
+      copy:
+        content: |
+          ╔════════════════════════════════════════════════════════════════╗
+          ║                    AUTHORIZED ACCESS ONLY                      ║
+          ║                                                                ║
+          ║  This system is for authorized use only. All activity may be  ║
+          ║  monitored and reported. Unauthorized access is prohibited.   ║
+          ╚════════════════════════════════════════════════════════════════╝
+        dest: /etc/ssh/banner
+        owner: root
+        group: root
+        mode: '0644'
+      tags: ssh
+      
+    - name: Deploy hardened SSH configuration
+      template:
+        src: templates/sshd_config.j2
+        dest: /etc/ssh/sshd_config
+        owner: root
+        group: root
+        mode: '0600'
+        validate: '/usr/sbin/sshd -t -f %s'
+        backup: false
+      notify: Restart SSH
+      tags: ssh
+    
+    # ============================================================================
+    # PHASE 2: FIREWALL CONFIGURATION (UFW)
+    # ============================================================================
+    
+    - name: Display firewall configuration
+      debug:
+        msg:
+          - "=== Firewall Configuration ==="
+          - "UFW Enabled: {{ ufw_enabled }}"
+          - "Default Incoming: {{ ufw_default_incoming }}"
+          - "Default Outgoing: {{ ufw_default_outgoing }}"
+          - "Allowed Ports: {{ ufw_allowed_ports }}"
+          - "Denied Ports: {{ ufw_denied_ports }}"
+      when: ufw_enabled
+      
+    - name: Install UFW firewall
+      apt:
+        name: ufw
+        state: present
+        update_cache: true
+      when: ufw_enabled
+      tags: firewall
+      
+    - name: Configure UFW - Reset to defaults
+      ufw:
+        state: reset
+      when: ufw_enabled
+      tags: firewall
+      
+    - name: Configure UFW - Default incoming policy
+      ufw:
+        direction: incoming
+        policy: "{{ ufw_default_incoming }}"
+      when: ufw_enabled
+      tags: firewall
+      
+    - name: Configure UFW - Default outgoing policy
+      ufw:
+        direction: outgoing
+        policy: "{{ ufw_default_outgoing }}"
+      when: ufw_enabled
+      tags: firewall
+      
+    - name: Configure UFW - Allow specified ports
+      ufw:
+        rule: allow
+        port: "{{ item.split('/')[0] }}"
+        proto: "{{ item.split('/')[1] }}"
+      loop: "{{ ufw_allowed_ports }}"
+      when: 
+        - ufw_enabled
+        - ufw_allowed_ports | length > 0
+      tags: firewall
+      
+    - name: Configure UFW - Deny specified ports
+      ufw:
+        rule: deny
+        port: "{{ item.split('/')[0] }}"
+        proto: "{{ item.split('/')[1] }}"
+      loop: "{{ ufw_denied_ports }}"
+      when:
+        - ufw_enabled
+        - ufw_denied_ports | length > 0
+      tags: firewall
+      
+    - name: Enable UFW firewall
+      ufw:
+        state: enabled
+      when: ufw_enabled
+      tags: firewall
+      
+    - name: Display UFW status
+      command: ufw status verbose
+      register: ufw_status
+      changed_when: false
+      when: ufw_enabled
+      tags: firewall
+      
+    - name: Show UFW status
+      debug:
+        var: ufw_status.stdout_lines
+      when: ufw_enabled
+      tags: firewall
+    
+    # ============================================================================
+    # PHASE 3: AUTOMATIC SECURITY UPDATES
+    # ============================================================================
+    
+    - name: Display automatic updates configuration
+      debug:
+        msg:
+          - "=== Automatic Updates Configuration ==="
+          - "Enabled: {{ unattended_upgrades_enabled }}"
+          - "Auto Reboot: {{ unattended_upgrades_auto_reboot }}"
+          - "Reboot Time: {{ unattended_upgrades_auto_reboot_time }}"
+      when: unattended_upgrades_enabled
+      
+    - name: Install unattended-upgrades package
+      apt:
+        name:
+          - unattended-upgrades
+          - apt-listchanges
+        state: present
+        update_cache: true
+      when: unattended_upgrades_enabled
+      tags: updates
+      
+    - name: Configure unattended-upgrades - Main configuration
+      template:
+        src: templates/50unattended-upgrades.j2
+        dest: /etc/apt/apt.conf.d/50unattended-upgrades
+        owner: root
+        group: root
+        mode: '0644'
+      when: unattended_upgrades_enabled
+      tags: updates
+      
+    - name: Configure unattended-upgrades - Auto-upgrades
+      template:
+        src: templates/20auto-upgrades.j2
+        dest: /etc/apt/apt.conf.d/20auto-upgrades
+        owner: root
+        group: root
+        mode: '0644'
+      when: unattended_upgrades_enabled
+      tags: updates
+      
+    - name: Enable and start unattended-upgrades service
+      systemd:
+        name: unattended-upgrades
+        enabled: true
+        state: started
+      when: unattended_upgrades_enabled
+      tags: updates
+    
+    # ============================================================================
+    # FINAL VERIFICATION
+    # ============================================================================
+    
+    - name: Display hardening summary
+      debug:
+        msg:
+          - "=== System Hardening Complete ==="
+          - ""
+          - "SSH Configuration:"
+          - "  - Port changed to: {{ ssh_port }}"
+          - "  - Root login: {{ ssh_permit_root_login }}"
+          - "  - Password auth: {{ ssh_password_authentication }}"
+          - "  - SSH config backed up to: /etc/ssh/sshd_config.backup.{{ backup_suffix }}"
+          - ""
+          - "Firewall Configuration:"
+          - "  - UFW enabled: {{ ufw_enabled }}"
+          - "  - Allowed ports: {{ ufw_allowed_ports | join(', ') if ufw_allowed_ports else 'None' }}"
+          - "  - Denied ports: {{ ufw_denied_ports | join(', ') if ufw_denied_ports else 'None' }}"
+          - ""
+          - "Automatic Updates:"
+          - "  - Enabled: {{ unattended_upgrades_enabled }}"
+          - "  - Auto reboot: {{ unattended_upgrades_auto_reboot }}"
+          - ""
+          - "IMPORTANT: SSH will restart. Reconnect using:"
+          - "  ssh -p {{ ssh_port }} phalkonadmin@{{ ansible_host }}"
+          - ""
+          - "Root login is now disabled. Use phalkonadmin with sudo."
+  
+  handlers:
+    - name: Restart SSH
+      systemd:
+        name: sshd
+        state: restarted
+      # Add delay to allow current connection to complete
+      async: 1
+      poll: 0
+      ignore_errors: true

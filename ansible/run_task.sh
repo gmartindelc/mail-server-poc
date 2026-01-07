@@ -47,7 +47,13 @@ echo "Target server from: ${CREDENTIAL_FILE}"
 export MAIL_SERVER_IP=$(head -n 1 "${CREDENTIAL_FILE}" | cut -d',' -f1)
 export MAIL_SERVER_PASS=$(head -n 1 "${CREDENTIAL_FILE}" | cut -d',' -f2)
 
+# Set default SSH port if not already set (supports Task 1.3.1+ on port 2288)
+if [ -z "$ANSIBLE_SSH_PORT" ]; then
+    export ANSIBLE_SSH_PORT=22
+fi
+
 echo "Server IP: ${MAIL_SERVER_IP}"
+echo "SSH Port: ${ANSIBLE_SSH_PORT}"
 
 # Run the playbook with environment variables set
 ansible-playbook -i "${INVENTORY_FILE}" "${PLAYBOOK}" "${@:2}"

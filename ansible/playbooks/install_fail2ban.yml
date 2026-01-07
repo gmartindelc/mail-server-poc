@@ -1,0 +1,205 @@
+---
+# Reusable Playbook: Install and Configure Fail2ban
+# Purpose: Install fail2ban and configure jails for intrusion prevention
+# Parameters:
+#   - fail2ban_enabled: Enable fail2ban service (default: true)
+#   - fail2ban_ssh_enabled: Enable SSH jail (default: true)
+#   - fail2ban_ssh_port: SSH port to monitor (default: 2288)
+#   - fail2ban_ssh_maxretry: Max failed attempts for SSH (default: 3)
+#   - fail2ban_ssh_findtime: Time window for failed attempts in seconds (default: 600)
+#   - fail2ban_ssh_bantime: Ban duration in seconds (default: 3600)
+#   - fail2ban_bantime: Global default ban time (default: 3600)
+#   - fail2ban_findtime: Global default find time (default: 600)
+#   - fail2ban_maxretry: Global default max retry (default: 3)
+#   - fail2ban_destemail: Email for notifications (default: empty/disabled)
+#   - fail2ban_sender: Email sender address (default: fail2ban@hostname)
+#   - fail2ban_mta: Mail transfer agent (default: sendmail)
+#   - fail2ban_loglevel: Logging level (default: INFO)
+#   - fail2ban_logtarget: Log file path (default: /var/log/fail2ban.log)
+#
+# Version: 1.0
+# Created: 2025-01-07
+
+- name: Install and Configure Fail2ban
+  hosts: mail_server
+  become: true
+  gather_facts: true
+  
+  vars:
+    # Default values (can be overridden)
+    fail2ban_enabled: true
+    fail2ban_ssh_enabled: true
+    fail2ban_ssh_port: 2288
+    fail2ban_ssh_maxretry: 3
+    fail2ban_ssh_findtime: 600
+    fail2ban_ssh_bantime: 3600
+    fail2ban_bantime: 3600
+    fail2ban_findtime: 600
+    fail2ban_maxretry: 3
+    fail2ban_destemail: ""
+    fail2ban_sender: "fail2ban@{{ ansible_hostname }}"
+    fail2ban_mta: "sendmail"
+    fail2ban_loglevel: "INFO"
+    fail2ban_logtarget: "/var/log/fail2ban.log"
+    
+    # Backup suffix
+    backup_suffix: "{{ ansible_date_time.iso8601_basic_short }}"
+  
+  tasks:
+    # ============================================================================
+    # PHASE 1: INSTALLATION
+    # ============================================================================
+    
+    - name: Display fail2ban configuration
+      debug:
+        msg:
+          - "=== Fail2ban Configuration ==="
+          - "Enabled: {{ fail2ban_enabled }}"
+          - "SSH Jail Enabled: {{ fail2ban_ssh_enabled }}"
+          - "SSH Port: {{ fail2ban_ssh_port }}"
+          - "SSH Max Retry: {{ fail2ban_ssh_maxretry }}"
+          - "SSH Find Time: {{ fail2ban_ssh_findtime }}s ({{ (fail2ban_ssh_findtime / 60) | int }}m)"
+          - "SSH Ban Time: {{ fail2ban_ssh_bantime }}s ({{ (fail2ban_ssh_bantime / 60) | int }}m)"
+          - "Email Notifications: {{ 'Enabled (' + fail2ban_destemail + ')' if fail2ban_destemail else 'Disabled' }}"
+      
+    - name: Install fail2ban package
+      apt:
+        name: fail2ban
+        state: present
+        update_cache: true
+      when: fail2ban_enabled
+      tags: fail2ban
+    
+    # ============================================================================
+    # PHASE 2: CONFIGURATION
+    # ============================================================================
+    
+    - name: Check if jail.conf exists
+      stat:
+        path: /etc/fail2ban/jail.conf
+      register: jail_conf_stat
+      when: fail2ban_enabled
+      tags: fail2ban
+    
+    - name: Backup original fail2ban configuration
+      copy:
+        src: /etc/fail2ban/jail.conf
+        dest: "/etc/fail2ban/jail.conf.backup.{{ backup_suffix }}"
+        remote_src: true
+        owner: root
+        group: root
+        mode: '0644'
+      when: 
+        - fail2ban_enabled
+        - jail_conf_stat.stat.exists
+      tags: fail2ban
+    
+    - name: Create fail2ban local configuration
+      template:
+        src: templates/jail.local.j2
+        dest: /etc/fail2ban/jail.local
+        owner: root
+        group: root
+        mode: '0644'
+      when: fail2ban_enabled
+      notify: Restart fail2ban
+      tags: fail2ban
+    
+    - name: Create SSH jail configuration
+      template:
+        src: templates/sshd.local.j2
+        dest: /etc/fail2ban/jail.d/sshd.local
+        owner: root
+        group: root
+        mode: '0644'
+      when: 
+        - fail2ban_enabled
+        - fail2ban_ssh_enabled
+      notify: Restart fail2ban
+      tags: fail2ban
+    
+    # ============================================================================
+    # PHASE 3: SERVICE MANAGEMENT
+    # ============================================================================
+    
+    - name: Enable and start fail2ban service
+      systemd:
+        name: fail2ban
+        enabled: true
+        state: started
+      when: fail2ban_enabled
+      tags: fail2ban
+    
+    # ============================================================================
+    # PHASE 4: VERIFICATION
+    # ============================================================================
+    
+    - name: Wait for fail2ban to initialize
+      pause:
+        seconds: 3
+      when: fail2ban_enabled
+    
+    - name: Check fail2ban status
+      command: fail2ban-client status
+      register: fail2ban_status
+      changed_when: false
+      when: fail2ban_enabled
+      tags: fail2ban
+    
+    - name: Check SSH jail status
+      command: fail2ban-client status sshd
+      register: fail2ban_sshd_status
+      changed_when: false
+      when: 
+        - fail2ban_enabled
+        - fail2ban_ssh_enabled
+      tags: fail2ban
+    
+    - name: Display fail2ban status
+      debug:
+        var: fail2ban_status.stdout_lines
+      when: fail2ban_enabled
+    
+    - name: Display SSH jail status
+      debug:
+        var: fail2ban_sshd_status.stdout_lines
+      when: 
+        - fail2ban_enabled
+        - fail2ban_ssh_enabled
+    
+    # ============================================================================
+    # FINAL SUMMARY
+    # ============================================================================
+    
+    - name: Display fail2ban summary
+      debug:
+        msg:
+          - "=== Fail2ban Installation Complete ==="
+          - ""
+          - "Global Configuration:"
+          - "  - Ban time: {{ fail2ban_bantime }}s ({{ (fail2ban_bantime / 60) | int }} minutes)"
+          - "  - Find time: {{ fail2ban_findtime }}s ({{ (fail2ban_findtime / 60) | int }} minutes)"
+          - "  - Max retry: {{ fail2ban_maxretry }} attempts"
+          - "  - Log level: {{ fail2ban_loglevel }}"
+          - "  - Log file: {{ fail2ban_logtarget }}"
+          - ""
+          - "SSH Jail Configuration:"
+          - "  - Status: {{ 'Enabled' if fail2ban_ssh_enabled else 'Disabled' }}"
+          - "  - Port: {{ fail2ban_ssh_port }}"
+          - "  - Max retry: {{ fail2ban_ssh_maxretry }} attempts"
+          - "  - Find time: {{ fail2ban_ssh_findtime }}s ({{ (fail2ban_ssh_findtime / 60) | int }} minutes)"
+          - "  - Ban time: {{ fail2ban_ssh_bantime }}s ({{ (fail2ban_ssh_bantime / 60) | int }} minutes)"
+          - ""
+          - "Email Notifications: {{ 'Enabled (' + fail2ban_destemail + ')' if fail2ban_destemail else 'Disabled' }}"
+          - ""
+          - "Useful Commands:"
+          - "  - Check status: sudo fail2ban-client status"
+          - "  - Check SSH jail: sudo fail2ban-client status sshd"
+          - "  - Unban IP: sudo fail2ban-client set sshd unbanip <IP>"
+          - "  - View logs: sudo tail -f /var/log/fail2ban.log"
+  
+  handlers:
+    - name: Restart fail2ban
+      systemd:
+        name: fail2ban
+        state: restarted
