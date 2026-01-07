@@ -208,7 +208,7 @@
         cmd: docker run --rm hello-world
       register: hello_world_test
       changed_when: false
-      ignore_errors: yes
+      ignore_errors: true
       tags:
         - docker
         - verification
