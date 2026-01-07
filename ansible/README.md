@@ -1,3 +1,815 @@
+# Mail Server PoC - Ansible Automation
+
+**Project:** High-Availability Mail Server Cluster - Phase 1 (Single VPS PoC)  
+**Server:** cucho1.phalkons.com (Debian 13, Vultr VPS)  
+**Last Updated:** 2025-01-07  
+**Status:** Milestone 1 - 85% Complete (Task Group 1.3 Complete)
+
+---
+
+## 🎯 Current Status
+
+### ✅ Completed Task Groups
+
+- **Task Group 1.1:** Initial Server Setup (VPS provisioned via Terraform)
+- **Task Group 1.2:** System User Administration (phalkonadmin user, Docker installed)
+- **Task Group 1.3:** System Hardening (SSH hardened, VPN integrated, fail2ban active) ← Latest session
+
+### ⏳ Next Task Group
+
+- **Task Group 1.4:** Directory Structure & Storage (3 tasks remaining)
+
+---
+
+## 🔐 Critical Connection Information
+
+**⚠️ IMPORTANT:** After Task Group 1.3, SSH is **VPN-ONLY**
+
+### SSH Connection (Post Task 1.3.4)
+
+```bash
+# SSH is now accessible ONLY via VPN IP
+ssh -p 2288 -o IdentitiesOnly=yes -i ~/SSH_KEYS_CAPITAN_TO_WORKERS/id_ed25519_common phalkonadmin@10.100.0.25
+```
+
+**Cannot connect via public IP anymore:**
+```bash
+# This will NOT work (blocked by firewall)
+ssh -p 2288 phalkonadmin@45.32.207.84  # ❌ BLOCKED
+```
+
+### Ansible Environment Variables (Required)
+
+**For all tasks after Task Group 1.3, set these variables:**
+
+```bash
+# Connection via VPN IP
+export ANSIBLE_HOST=10.100.0.25
+
+# SSH settings
+export ANSIBLE_REMOTE_PORT=2288
+export ANSIBLE_REMOTE_USER=phalkonadmin
+export ANSIBLE_PRIVATE_KEY_FILE=~/SSH_KEYS_CAPITAN_TO_WORKERS/id_ed25519_common
+```
+
+**Add to shell profile for persistence:**
+```bash
+cat >> ~/.bashrc << 'ENVEOF'
+# Ansible configuration for mail server (after Task Group 1.3)
+export ANSIBLE_HOST=10.100.0.25
+export ANSIBLE_REMOTE_PORT=2288
+export ANSIBLE_REMOTE_USER=phalkonadmin
+export ANSIBLE_PRIVATE_KEY_FILE=~/SSH_KEYS_CAPITAN_TO_WORKERS/id_ed25519_common
+ENVEOF
+
+source ~/.bashrc
+```
+
+---
+
+## 🚀 Quick Start
+
+### Running Tasks
+
+```bash
+# Set environment variables (if not in shell profile)
+export ANSIBLE_HOST=10.100.0.25
+export ANSIBLE_REMOTE_PORT=2288
+export ANSIBLE_REMOTE_USER=phalkonadmin
+export ANSIBLE_PRIVATE_KEY_FILE=~/SSH_KEYS_CAPITAN_TO_WORKERS/id_ed25519_common
+
+# Run a task
+./run_task.sh 1.4.1
+
+# Dry run first (recommended)
+./run_task.sh 1.4.1 --check
+```
+
+### Viewing Available Tasks
+
+```bash
+# List all available tasks
+./run_task.sh
+
+# View task documentation
+cat README.md
+```
+
+---
+
+## 📊 System Architecture
+
+### Current Configuration
+
+**Network:**
+- Public IP: 45.32.207.84
+- VPN IP: 10.100.0.25/24
+- VPN Network: 10.100.0.0/24
+- VPN Peer: 144.202.76.243:51820
+
+**SSH Access:**
+- Port: 2288 (non-standard)
+- Interface: VPN only (10.100.0.25)
+- Authentication: Key-only (no passwords)
+- User: phalkonadmin (root disabled)
+
+**Security Services:**
+- SSH: Hardened, VPN-only access
+- WireGuard: Active VPN connection
+- UFW: Firewall enabled, default-deny incoming
+- Fail2ban: Active, monitoring SSH (3 attempts = 1 hour ban)
+- Unattended-upgrades: Automatic security updates
+
+**Systemd Dependencies:**
+- SSH service depends on WireGuard (starts only after VPN is up)
+
+---
+
+## 🗂️ Project Structure
+
+```
+ansible/
+├── ansible.cfg                         # Ansible configuration
+├── inventory.yml                       # Dynamic inventory (env-based)
+├── run_task.sh                         # Task runner script
+├── run_all_tasks.sh                    # Batch runner (Task Group 1.2 only)
+├── setup_wg_credentials.sh             # WireGuard credential extraction
+├── README.md                           # This file
+│
+└── playbooks/
+    ├── Task Wrappers (task_X.X.X.yml)
+    │   ├── task_1.3.1.yml             # System hardening
+    │   ├── task_1.3.2.yml             # WireGuard VPN
+    │   ├── task_1.3.3.yml             # Network verification
+    │   ├── task_1.3.4.yml             # SSH VPN-only
+    │   └── task_1.3.5.yml             # Fail2ban
+    │
+    ├── Reusable Playbooks
+    │   ├── system_hardening.yml
+    │   ├── install_wireguard.yml
+    │   ├── verify_network_interfaces.yml
+
+---
+
+## 📋 Complete Setup and Task Running Procedures
+
+### 🔐 Initial Setup: WireGuard Credentials (One-Time Setup)
+
+**Only needed if you haven't run Task 1.3.2 yet, or need to regenerate credentials**
+
+#### Step 1: Locate Your WireGuard Configuration
+
+You should have a WireGuard configuration file for this server:
+- Location: `~/Wireguard-clients/Server-Cucho1.conf` (or similar)
+- Contains: PrivateKey, Address, Peer information
+
+#### Step 2: Extract Credentials Securely
+
+```bash
+cd /path/to/mail-server-poc/ansible
+
+# Run the credential extraction script
+./setup_wg_credentials.sh ~/Wireguard-clients/Server-Cucho1.conf
+```
+
+**The script will:**
+1. ✅ Extract PrivateKey → `../wg_credentials/private_key`
+2. ✅ Extract Address → `../wg_credentials/address`
+3. ✅ Extract Peer PublicKey → `../wg_credentials/peer_public_key`
+4. ✅ Extract Endpoint → `../wg_credentials/endpoint`
+5. ✅ Set secure permissions (700 on directory, 600 on files)
+6. ✅ Update `.gitignore` to protect secrets
+7. ✅ Create README in credentials directory
+
+**Example Output:**
+```
+========================================
+WireGuard Credentials Setup
+========================================
+
+✓ Found WireGuard config: /home/user/Wireguard-clients/Server-Cucho1.conf
+
+Extracting credentials from /home/user/Wireguard-clients/Server-Cucho1.conf...
+✓ Private Key: eMwek+oFM2...ggjywo77U4=
+✓ Address: 10.100.0.25/24
+✓ Peer Public Key: /fKlGm12NB...msNEwQ=
+✓ Endpoint: 144.202.76.243:51820
+✓ Allowed IPs: 10.100.0.0/24
+✓ Keepalive: 25s
+
+Creating credentials directory...
+✓ Created: ../wg_credentials
+✓ Set permissions: 700 (rwx------) on ../wg_credentials
+
+Creating credential files...
+✓ Created: ../wg_credentials/private_key (600)
+✓ Created: ../wg_credentials/address (600)
+✓ Created: ../wg_credentials/peer_public_key (600)
+✓ Created: ../wg_credentials/endpoint (600)
+✓ Created: ../wg_credentials/README.md (600)
+
+Updating .gitignore...
+✓ Added to .gitignore: wg0.conf
+✓ Added to .gitignore: wg_credentials/
+
+========================================
+Setup Complete!
+========================================
+
+Credentials stored in: ../wg_credentials
+Protected by: ../.gitignore
+
+Next steps:
+  1. Run Task 1.3.2: ./run_task.sh 1.3.2
+  2. Verify .gitignore: git status
+  3. NEVER commit wg0.conf or wg_credentials/
+
+✓ Safe to run Ansible playbooks!
+```
+
+#### Step 3: Verify Credentials Were Created
+
+```bash
+# Check directory structure
+ls -la ../wg_credentials/
+
+# Should show:
+# drwx------  2 user user  4096 Jan  7 10:00 .
+# -rw-------  1 user user    44 Jan  7 10:00 private_key
+# -rw-------  1 user user    15 Jan  7 10:00 address
+# -rw-------  1 user user    44 Jan  7 10:00 peer_public_key
+# -rw-------  1 user user    22 Jan  7 10:00 endpoint
+# -rw-------  1 user user   543 Jan  7 10:00 README.md
+```
+
+#### Step 4: Verify .gitignore Protection
+
+```bash
+# Check git status
+git status
+
+# wg0.conf and wg_credentials/ should NOT appear in:
+# - Untracked files
+# - Changes to be committed
+
+# If they appear, .gitignore is not working correctly
+```
+
+**⚠️ CRITICAL: Never commit these files!**
+```bash
+# These should be in .gitignore:
+wg0.conf
+wg*.conf
+wg_credentials/
+*.secret
+```
+
+---
+
+## 🚀 Running Tasks: Step-by-Step Guide
+
+### Prerequisites Check
+
+Before running any task, ensure you have:
+
+- ✅ **SSH Key**: `~/SSH_KEYS_CAPITAN_TO_WORKERS/id_ed25519_common` exists
+- ✅ **Credentials File**: `../cucho1.phalkons.com.secret` exists
+- ✅ **WireGuard Credentials**: `../wg_credentials/` directory exists (if running Task 1.3.2)
+- ✅ **VPN Connection**: Can ping 10.100.0.1 (for post-1.3.2 tasks)
+
+**Quick Check:**
+```bash
+# Check SSH key exists
+ls -la ~/SSH_KEYS_CAPITAN_TO_WORKERS/id_ed25519_common
+
+# Check credentials file exists
+cat ../cucho1.phalkons.com.secret
+
+# Check WireGuard credentials (if needed)
+ls -la ../wg_credentials/
+
+# Test VPN connectivity (if VPN is set up)
+ping -c 2 10.100.0.1
+```
+
+---
+
+### 📝 Step 1: Set Environment Variables
+
+**Every new terminal session requires these variables:**
+
+```bash
+# Navigate to ansible directory
+cd /path/to/mail-server-poc/ansible
+
+# Set environment variables
+export ANSIBLE_HOST=10.100.0.25                                              # VPN IP (after Task 1.3.4)
+export ANSIBLE_REMOTE_PORT=2288                                              # SSH port (after Task 1.3.1)
+export ANSIBLE_REMOTE_USER=phalkonadmin                                      # User (after Task 1.2.3)
+export ANSIBLE_PRIVATE_KEY_FILE=~/SSH_KEYS_CAPITAN_TO_WORKERS/id_ed25519_common  # Bastion key
+```
+
+**Verify variables are set:**
+```bash
+echo "Host: $ANSIBLE_HOST"
+echo "Port: $ANSIBLE_REMOTE_PORT"
+echo "User: $ANSIBLE_REMOTE_USER"
+echo "Key: $ANSIBLE_PRIVATE_KEY_FILE"
+```
+
+**Make permanent (recommended):**
+```bash
+cat >> ~/.bashrc << 'ENVEOF'
+# Ansible configuration for mail server (Task Group 1.3+)
+export ANSIBLE_HOST=10.100.0.25
+export ANSIBLE_REMOTE_PORT=2288
+export ANSIBLE_REMOTE_USER=phalkonadmin
+export ANSIBLE_PRIVATE_KEY_FILE=~/SSH_KEYS_CAPITAN_TO_WORKERS/id_ed25519_common
+ENVEOF
+
+# Apply immediately
+source ~/.bashrc
+
+# Verify
+echo $ANSIBLE_HOST
+```
+
+---
+
+### 🔌 Step 2: Test SSH Connectivity
+
+**Before running any Ansible task, test SSH manually:**
+
+```bash
+ssh -p 2288 -o IdentitiesOnly=yes \
+    -i ~/SSH_KEYS_CAPITAN_TO_WORKERS/id_ed25519_common \
+    phalkonadmin@10.100.0.25
+```
+
+**Expected:**
+```
+╔════════════════════════════════════════════════════════════════╗
+║                    AUTHORIZED ACCESS ONLY                      ║
+║                                                                ║
+║  This system is for authorized use only. All activity may be  ║
+║  monitored and reported. Unauthorized access is prohibited.   ║
+╚════════════════════════════════════════════════════════════════╝
+Linux cucho1 6.12.57+deb13-amd64 ...
+phalkonadmin@cucho1:~$
+```
+
+**If connection fails:**
+```bash
+# Check VPN is up
+ping 10.100.0.1
+
+# Check SSH key permissions
+ls -la ~/SSH_KEYS_CAPITAN_TO_WORKERS/id_ed25519_common
+# Should be: -rw------- (600)
+
+# Fix key permissions if needed
+chmod 600 ~/SSH_KEYS_CAPITAN_TO_WORKERS/id_ed25519_common
+
+# Check environment variables
+echo $ANSIBLE_HOST
+```
+
+**Exit SSH session:**
+```bash
+exit
+```
+
+---
+
+### 📖 Step 3: Review Task Documentation
+
+**Before running a task, understand what it does:**
+
+```bash
+# View task wrapper to see parameters
+cat playbooks/task_1.4.1.yml
+
+# View reusable playbook to see detailed steps
+cat playbooks/create_directories.yml  # (example)
+
+# Read this README for detailed task descriptions
+# See "Task Documentation" section below
+```
+
+**Key questions to answer:**
+- ✅ What does this task do?
+- ✅ What will change on the server?
+- ✅ Are there any dependencies? (previous tasks that must be complete)
+- ✅ Are there any risks? (service restarts, configuration changes)
+- ✅ How long will it take? (estimate)
+
+---
+
+### 🧪 Step 4: Run Dry Run (--check mode)
+
+**ALWAYS run --check first to preview changes:**
+
+```bash
+./run_task.sh 1.4.1 --check
+```
+
+**What --check mode does:**
+- ✅ Shows what WOULD change (without making changes)
+- ✅ Tests connectivity to server
+- ✅ Validates playbook syntax
+- ✅ Checks if files/services exist
+- ⚠️ Some checks may fail (services not installed yet)
+
+**Review dry run output:**
+```bash
+PLAY [Create Mail System Directories] *************************
+
+TASK [Display directory creation plan] ***********************
+ok: [mail_server] =>
+  msg:
+  - Creating directories:
+  - /var/mail/vmail/
+  - /var/mail/queue/
+  ...
+
+TASK [Create directory: /var/mail/vmail] *********************
+changed: [mail_server]  # ← Would create this directory
+
+PLAY RECAP ****************************************************
+mail_server : ok=10 changed=5 unreachable=0 failed=0
+```
+
+**Check for:**
+- ❌ **failed=0** - No failures
+- ❌ **unreachable=0** - Server is reachable
+- ✅ **changed=X** - Shows what will change
+- ⚠️ **warnings** - Review any warnings
+
+---
+
+### ▶️ Step 5: Execute the Task
+
+**If dry run looks good, run for real:**
+
+```bash
+./run_task.sh 1.4.1
+```
+
+**Monitor the output:**
+```bash
+Running task 1.4.1: playbooks/task_1.4.1.yml
+Target server from: ../cucho1.phalkons.com.secret
+Server IP: 10.100.0.25
+SSH Port: 2288
+
+PLAY [Create Mail System Directories] *************************
+
+TASK [Gathering Facts] ****************************************
+ok: [mail_server]
+
+TASK [Display directory creation plan] ************************
+ok: [mail_server]
+
+TASK [Create directory: /var/mail/vmail] *********************
+changed: [mail_server]  # ← Directory created
+
+TASK [Set directory ownership] *******************************
+changed: [mail_server]
+
+PLAY RECAP ****************************************************
+mail_server : ok=15 changed=10 unreachable=0 failed=0
+```
+
+**Task completion indicators:**
+- ✅ **Green "ok"** - Task succeeded, no changes
+- ✅ **Yellow "changed"** - Task succeeded, made changes
+- ❌ **Red "failed"** - Task failed, check error message
+- ⚠️ **Orange "unreachable"** - Cannot connect to server
+
+**If task fails:**
+```bash
+# Check the error message in output
+# Most common issues:
+# - File/directory permissions
+# - Service not running
+# - Configuration syntax errors
+
+# Check logs on server
+ssh -p 2288 -o IdentitiesOnly=yes \
+    -i ~/SSH_KEYS_CAPITAN_TO_WORKERS/id_ed25519_common \
+    phalkonadmin@10.100.0.25
+
+sudo journalctl -xe  # System logs
+sudo systemctl status <service>  # Service status
+```
+
+---
+
+### ✅ Step 6: Verify Task Results
+
+**After task completes, verify changes were applied:**
+
+```bash
+# Connect to server
+ssh -p 2288 -o IdentitiesOnly=yes \
+    -i ~/SSH_KEYS_CAPITAN_TO_WORKERS/id_ed25519_common \
+    phalkonadmin@10.100.0.25
+```
+
+**Task-specific verification commands:**
+
+**For Task 1.3.1 (SSH Hardening):**
+```bash
+# Check SSH config
+sudo grep -E "^(Port|PermitRootLogin|PasswordAuthentication)" /etc/ssh/sshd_config
+
+# Check firewall
+sudo ufw status
+
+# Check auto-updates
+sudo systemctl is-active unattended-upgrades
+```
+
+**For Task 1.3.2 (WireGuard VPN):**
+```bash
+# Check WireGuard status
+sudo wg show
+
+# Check interface
+ip addr show wg0
+
+# Test connectivity
+ping -c 3 10.100.0.1
+```
+
+**For Task 1.3.5 (Fail2ban):**
+```bash
+# Check fail2ban status
+sudo fail2ban-client status
+
+# Check SSH jail
+sudo fail2ban-client status sshd
+
+# View logs
+sudo tail -f /var/log/fail2ban.log
+```
+
+**For Task 1.4.1 (Directories):**
+```bash
+# Check directories exist
+ls -la /var/mail/
+ls -la /opt/postgres/
+
+# Check ownership and permissions
+ls -ld /var/mail/vmail/
+```
+
+---
+
+## 🎯 Common Task Running Scenarios
+
+### Scenario 1: First Time Running Tasks (Fresh Terminal)
+
+```bash
+# 1. Navigate to project
+cd /path/to/mail-server-poc/ansible
+
+# 2. Set environment variables
+export ANSIBLE_HOST=10.100.0.25
+export ANSIBLE_REMOTE_PORT=2288
+export ANSIBLE_REMOTE_USER=phalkonadmin
+export ANSIBLE_PRIVATE_KEY_FILE=~/SSH_KEYS_CAPITAN_TO_WORKERS/id_ed25519_common
+
+# 3. Test connectivity
+ssh -p 2288 -o IdentitiesOnly=yes -i ~/SSH_KEYS_CAPITAN_TO_WORKERS/id_ed25519_common phalkonadmin@10.100.0.25
+exit
+
+# 4. Run task
+./run_task.sh 1.4.1 --check  # Dry run
+./run_task.sh 1.4.1          # Real run
+
+# 5. Verify
+ssh -p 2288 -o IdentitiesOnly=yes -i ~/SSH_KEYS_CAPITAN_TO_WORKERS/id_ed25519_common phalkonadmin@10.100.0.25
+# Run verification commands
+exit
+```
+
+### Scenario 2: Running Task 1.3.2 (WireGuard Setup)
+
+```bash
+# 1. Extract WireGuard credentials (one-time)
+cd /path/to/mail-server-poc/ansible
+./setup_wg_credentials.sh ~/Wireguard-clients/Server-Cucho1.conf
+
+# 2. Verify credentials
+ls -la ../wg_credentials/
+
+# 3. Set environment variables (using OLD connection method before VPN)
+export ANSIBLE_HOST=45.32.207.84  # Public IP (before Task 1.3.4)
+export ANSIBLE_REMOTE_PORT=2288
+export ANSIBLE_REMOTE_USER=phalkonadmin
+export ANSIBLE_PRIVATE_KEY_FILE=~/SSH_KEYS_CAPITAN_TO_WORKERS/id_ed25519_common
+
+# 4. Run task
+./run_task.sh 1.3.2 --check
+./run_task.sh 1.3.2
+
+# 5. Verify VPN
+ssh -p 2288 phalkonadmin@45.32.207.84  # Still works
+ssh -p 2288 phalkonadmin@10.100.0.25   # Now works too!
+sudo wg show
+sudo ip addr show wg0
+ping -c 3 10.100.0.1
+exit
+
+# 6. Update environment variable for future tasks
+export ANSIBLE_HOST=10.100.0.25  # Use VPN IP from now on
+```
+
+### Scenario 3: Running Multiple Tasks in Sequence
+
+```bash
+# Set environment variables once
+export ANSIBLE_HOST=10.100.0.25
+export ANSIBLE_REMOTE_PORT=2288
+export ANSIBLE_REMOTE_USER=phalkonadmin
+export ANSIBLE_PRIVATE_KEY_FILE=~/SSH_KEYS_CAPITAN_TO_WORKERS/id_ed25519_common
+
+# Run tasks in sequence
+./run_task.sh 1.4.1 --check && \
+./run_task.sh 1.4.1 && \
+./run_task.sh 1.4.2 --check && \
+./run_task.sh 1.4.2 && \
+./run_task.sh 1.4.3 --check && \
+./run_task.sh 1.4.3
+
+# The && operator ensures each task completes successfully before running the next
+```
+
+### Scenario 4: Task Failed - Troubleshooting
+
+```bash
+# Task failed with error
+./run_task.sh 1.4.1
+# ERROR: Permission denied
+
+# Connect to server to investigate
+ssh -p 2288 -o IdentitiesOnly=yes -i ~/SSH_KEYS_CAPITAN_TO_WORKERS/id_ed25519_common phalkonadmin@10.100.0.25
+
+# Check logs
+sudo journalctl -xe | tail -50
+
+# Check permissions
+ls -la /var/mail/
+
+# Fix issue manually if needed
+sudo chown phalkonadmin:phalkonadmin /var/mail/
+
+# Exit and retry task
+exit
+./run_task.sh 1.4.1
+```
+
+### Scenario 5: Emergency Recovery (Locked Out)
+
+```bash
+# If you get locked out after Task 1.3.4
+
+# 1. Access Vultr web console
+# - Login to Vultr dashboard
+# - Navigate to server: cucho1
+# - Click "View Console"
+
+# 2. Login as root
+# Username: root
+# Password: (from ../cucho1.phalkons.com.secret, first line, second field)
+
+# 3. Run rollback script
+bash /root/rollback_scripts/rollback_ssh_vpn_only.sh
+
+# 4. SSH access restored to public IP
+ssh -p 2288 -i ~/SSH_KEYS_CAPITAN_TO_WORKERS/id_ed25519_common phalkonadmin@45.32.207.84
+
+# 5. Debug and re-run task
+```
+
+---
+
+## 🔄 Task Execution Workflow Diagram
+
+```
+┌─────────────────────────────────────────┐
+│ 0. ONE-TIME: Extract WireGuard Creds   │
+│    ./setup_wg_credentials.sh wg0.conf  │
+│    (Only for Task 1.3.2)               │
+└────────────┬────────────────────────────┘
+             │
+             ▼
+┌─────────────────────────────────────────┐
+│ 1. Set Environment Variables            │
+│    export ANSIBLE_HOST=10.100.0.25     │
+│    export ANSIBLE_REMOTE_PORT=2288      │
+│    export ANSIBLE_REMOTE_USER=...       │
+│    export ANSIBLE_PRIVATE_KEY_FILE=...  │
+└────────────┬────────────────────────────┘
+             │
+             ▼
+┌─────────────────────────────────────────┐
+│ 2. Test SSH Connectivity                │
+│    ssh -p 2288 phalkonadmin@10.100.0.25│
+│    (Verify you can connect)             │
+└────────────┬────────────────────────────┘
+             │
+             ▼
+┌─────────────────────────────────────────┐
+│ 3. Review Task Documentation            │
+│    cat playbooks/task_X.X.X.yml        │
+│    Read README.md for details           │
+└────────────┬────────────────────────────┘
+             │
+             ▼
+┌─────────────────────────────────────────┐
+│ 4. Run Dry Run (--check)               │
+│    ./run_task.sh X.X.X --check         │
+│    Review what will change              │
+└────────────┬────────────────────────────┘
+             │
+             ▼
+┌─────────────────────────────────────────┐
+│ 5. Review Dry Run Output                │
+│    Check: failed=0, unreachable=0       │
+│    Review: changed=X items              │
+└────────────┬────────────────────────────┘
+             │
+             ▼
+┌─────────────────────────────────────────┐
+│ 6. Execute Task                         │
+│    ./run_task.sh X.X.X                  │
+│    Monitor output for errors            │
+└────────────┬────────────────────────────┘
+             │
+             ▼
+┌─────────────────────────────────────────┐
+│ 7. Verify Results                       │
+│    ssh to server                        │
+│    Run verification commands            │
+│    Check services/configs/files         │
+└─────────────────────────────────────────┘
+```
+
+---
+
+    │   ├── configure_ssh_vpn_only.yml
+    │   └── install_fail2ban.yml
+    │
+    └── templates/
+        ├── sshd_config.j2
+        ├── 50unattended-upgrades.j2
+        ├── 20auto-upgrades.j2
+        ├── wg0.conf.j2
+        ├── jail.local.j2
+        └── sshd.local.j2
+```
+
+---
+
+## 🔒 Security Notes
+
+### Credential Management
+
+**WireGuard Credentials:**
+```bash
+# Extract from wg0.conf securely
+./setup_wg_credentials.sh ~/Wireguard-clients/Server-Cucho1.conf
+
+# Credentials stored in: ../wg_credentials/
+# Protected by: .gitignore
+```
+
+**SSH Keys:**
+- Bastion key: `~/SSH_KEYS_CAPITAN_TO_WORKERS/id_ed25519_common`
+- Vultr key: `~/.ssh/id_ed25519_lc02_vultr` (emergency access only)
+
+**Emergency Access:**
+- Vultr web console (root access)
+- Root password: From `../cucho1.phalkons.com.secret`
+- Rollback script: `/root/rollback_scripts/rollback_ssh_vpn_only.sh`
+
+### Firewall Rules
+
+```bash
+# Current UFW rules
+Status: active
+
+To                         Action      From
+--                         ------      ----
+2288/tcp                   ALLOW       10.100.0.0/24    # SSH from VPN only
+```
+
+---
+
+## 📖 Task Documentation
+
 # Ansible Automation for Mail Server PoC
 
 **Last Updated:** 2025-01-05  

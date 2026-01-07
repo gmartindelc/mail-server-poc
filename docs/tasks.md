@@ -1,33 +1,42 @@
 # Mail Server Cluster PoC - Task Tracking
 
 **Last Updated:** 2025-01-07  
-**Current Phase:** Milestone 1 - Environment Setup & Foundation (Task 1.3.1 Complete)  
-**Status:** ✅ Task 1.3.1 Complete - Task Group 1.3 in progress
+**Current Phase:** Milestone 1 - Environment Setup & Foundation (Task Group 1.3 Complete)  
+**Status:** ✅ Task Group 1.3 Complete - Ready for Task Group 1.4
 
 ## Recent Session Summary (2025-01-07)
 
-**Completed:** Task 1.3.1 - Configure Basic System Hardening  
-**Status:** SSH hardening, UFW firewall, and automatic updates configured  
-**Next Action:** Tasks 1.3.2-1.3.4 (WireGuard VPN integration), then Task 1.3.5 (fail2ban)
+**Completed:** Task Group 1.3 - System Hardening (All 5 tasks)  
+**Duration:** ~4 hours  
+**Status:** SSH hardened, VPN integrated, fail2ban active, VPN-only SSH access configured
 
 **Key Achievements:**
 
-- SSH hardened: Port 2288, key-only auth, root login disabled
-- UFW firewall enabled with default-deny policy
-- Automatic security updates configured
-- Security banner added
-- Modern cryptography enforced (curve25519, ChaCha20-Poly1305)
+- Task 1.3.1: SSH hardening (port 2288, key-only, root disabled, modern crypto)
+- Task 1.3.2: WireGuard VPN integration (10.100.0.25/24, peer 144.202.76.243:51820)
+- Task 1.3.3: Network interface verification (VPN and internet connectivity tested)
+- Task 1.3.4: SSH VPN-only access (SSH restricted to 10.100.0.25, systemd dependency)
+- Task 1.3.5: Fail2ban intrusion prevention (3 attempts in 10 min = 1 hour ban)
 
-**Connection After Task 1.3.1:**
+**Infrastructure:**
+- 25 files delivered (playbooks, templates, scripts, documentation)
+- Secure credential management (setup_wg_credentials.sh, .gitignore protection)
+- Emergency rollback procedures created
+- Dynamic Ansible configuration via environment variables
+
+**CRITICAL - Connection After This Session:**
 ```bash
-ssh -p 2288 -o IdentitiesOnly=yes -i ~/SSH_KEYS_CAPITAN_TO_WORKERS/id_ed25519_common phalkonadmin@45.32.207.84
+# SSH is now VPN-only
+ssh -p 2288 -o IdentitiesOnly=yes -i ~/SSH_KEYS_CAPITAN_TO_WORKERS/id_ed25519_common phalkonadmin@10.100.0.25
+
+# Ansible environment variables (required for all future tasks)
+export ANSIBLE_HOST=10.100.0.25
+export ANSIBLE_REMOTE_PORT=2288
+export ANSIBLE_REMOTE_USER=phalkonadmin
+export ANSIBLE_PRIVATE_KEY_FILE=~/SSH_KEYS_CAPITAN_TO_WORKERS/id_ed25519_common
 ```
 
-**For Ansible (tasks 1.3.2+):**
-```bash
-export ANSIBLE_SSH_PORT=2288
-./run_task.sh 1.3.x
-```
+**Next Action:** Task Group 1.4 - Directory Structure & Storage
 
 ---
 
@@ -155,7 +164,7 @@ export ANSIBLE_SSH_PORT=2288
 
 ### **Task Group 1.3: System Hardening**
 
-**Status:** [▓▓▓░░] 60% Complete (3 of 5 tasks complete)
+**Status:** [▓▓▓▓▓] 100% Complete (5 of 5 tasks complete) ✅
 
 #### **Tasks:**
 
@@ -190,12 +199,15 @@ export ANSIBLE_SSH_PORT=2288
     - Start and enable WireGuard service at boot
     - Credential extraction script created (setup_wg_credentials.sh)
 
-- [ ] **Task 1.3.3:** Configure network interfaces and DNS resolution
+- [x] **Task 1.3.3:** Configure network interfaces and DNS resolution
 
   - _Estimate:_ 30 minutes
   - _Dependencies:_ 1.3.2
   - _Automation:_ Ansible playbook `task_1.3.3.yml` → `verify_network_interfaces.yml`
-  - _What it does:_
+  - _Assigned to:_ GMCE
+  - _Completed on:_ 2025-01-07
+  - _Notes:_ Network verification only, DNS skipped (to be configured with proper DNS server)
+  - _What was done:_
     - Verify WireGuard interface (wg0) is up with correct IP
     - Check routing tables for VPN and default routes
     - Validate network interface metrics
@@ -203,34 +215,35 @@ export ANSIBLE_SSH_PORT=2288
     - Test internet connectivity
     - Document network configuration
     - DNS configuration skipped (to be done when proper DNS server is installed)
-  - _Assigned to:_
-  - _Completed on:_
 
-- [ ] **Task 1.3.4:** Create start dependency on ssh after wireguard is up + Restrict SSH to VPN only
+- [x] **Task 1.3.4:** Create start dependency on ssh after wireguard is up + Restrict SSH to VPN only
   - _Estimate:_ 30 minutes
   - _Dependencies:_ 1.3.3
-  - _Security Note:_ **CRITICAL** - After this task, SSH will ONLY be accessible via VPN (10.100.0.25)
-  - _What it does:_
+  - _Automation:_ Ansible playbook `task_1.3.4.yml` → `configure_ssh_vpn_only.yml`
+  - _Assigned to:_ GMCE
+  - _Completed on:_ 2025-01-07
+  - _Notes:_ SSH now ONLY accessible via VPN (10.100.0.25:2288), public SSH access blocked
+  - _What was done:_
     - Configure systemd to start SSH only after WireGuard is up
     - Restrict SSH to listen only on WireGuard interface (10.100.0.25:2288)
     - Update UFW to allow SSH only from VPN network (10.100.0.0/24)
-    - Remove public SSH access (blocks SSH from internet)
-    - Add safety check to prevent lockout
-  - _Assigned to:_
-  - _Completed on:_
+    - Remove public SSH access from firewall
+    - Create emergency rollback script (/root/rollback_scripts/rollback_ssh_vpn_only.sh)
+    - Add safety checks to prevent lockout
 
-- [ ] **Task 1.3.5:** Install and configure fail2ban for intrusion prevention
+- [x] **Task 1.3.5:** Install and configure fail2ban for intrusion prevention
   - _Estimate:_ 30 minutes
   - _Dependencies:_ 1.3.1
   - _Automation:_ Ansible playbook `task_1.3.5.yml` → `install_fail2ban.yml`
-  - _What it does:_
+  - _Assigned to:_ GMCE
+  - _Completed on:_ 2025-01-07
+  - _Notes:_ Monitoring SSH on port 2288, ban policy active
+  - _What was done:_
     - Install fail2ban package
     - Configure SSH jail monitoring port 2288
     - Set ban policy: 3 attempts in 10 minutes = 1 hour ban
     - Enable and start fail2ban service
     - Configure logging to /var/log/fail2ban.log
-  - _Assigned to:_
-  - _Completed on:_
 
 ### **Task Group 1.4: Directory Structure & Storage**
 

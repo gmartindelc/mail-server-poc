@@ -1,308 +1,240 @@
-# Assistant Rules for Mail Server Cluster PoC Project
-
-## 1. Session Startup Protocol
-
-### 1.1 Initial Session Steps
-
-1. **Always begin** by reading the `planning.md` file to understand:
-
-   - Current project phase and objectives
-   - Recent decisions and context
-   - Known issues or blockers
-   - Upcoming milestones
-
-2. **Immediately check** `tasks.md` before beginning any work:
-
-   - Review priority order (P0 → P1 → P2 → P3)
-   - Identify assigned tasks for current session
-   - Note any dependencies or prerequisites
-
-3. **Verify context** from previous session:
-   - Check last session's notes in `session_logs/`
-   - Review any unresolved items from previous work
-
-## 2. Task Management Rules
-
-### 2.1 Before Starting Work
-
-- **Always reference** the PRD (Mail_Server_POC_PRD.md) for requirements
-- **Confirm understanding** of task requirements with the user
-- **Identify** any missing information needed to complete the task
-- **Check** if task requires updates to documentation
-
-### 2.2 During Task Execution
-
-- **Document** all commands run and configurations made
-- **Note** any deviations from planned approach with rationale
-- **Capture** output snippets, error messages, and resolutions
-- **Update** `tasks.md` with progress comments
-
-### 2.3 Task Completion Protocol
-
-- **Mark tasks as completed** in `tasks.md` with:
-
-  - Completion timestamp
-  - Brief summary of work done
-  - Any follow-up actions needed
-  - Reference to documentation updates
-
-- **Verify completion criteria** match PRD requirements
-- **Update** relevant documentation files
-- **Notify** user of completion and next recommended steps
-
-## 3. Discovery of New Tasks
-
-### 3.1 When New Tasks Are Identified
-
-1. **Immediately add** to `tasks.md` with:
-
-   - Clear, actionable description
-   - Priority level (P0-P3)
-   - Dependencies on other tasks
-   - Estimated effort (if possible)
-
-2. **Categorize** tasks appropriately:
-
-   - **Bug Fixes**: Issues discovered during implementation
-   - **Enhancements**: Improvements beyond PRD requirements
-   - **Documentation**: Missing or unclear documentation
-   - **Technical Debt**: Code/configuration quality issues
-
-3. **Prioritize** based on:
-   - Impact on project success criteria
-   - Dependencies with other tasks
-   - Risk mitigation needs
-   - User/stakeholder requests
-
-## 4. Documentation Requirements
-
-### 3.4 Coding Standards
-
-1. **Follow the coding best practices**
-2. **Prefer the use of .env files for configuration**
-3. **Use meaningful variable names**
-4. **Document all changes and decisions in the PRD**
-5. **Use consistent formatting and headings**
-6. **Use clear and concise language**
-7. **Prefer parameterized values than hard-coded values**
-8. **Propose folder/file structures**
-
-1
-
-### 4.1 Mandatory Updates
-
-**Always update** these documents when relevant:
-
-1. **`tasks.md`**: Task status, new discoveries, blockers
-2. **`planning.md`**: Timeline adjustments, decisions, lessons learned
-3. **`session_logs/[date].md`**: Detailed session activities
-4. **Component-specific docs**: Config files, setup procedures
-
-### 4.2 Documentation Standards
-
-- **Use clear headings** and consistent formatting
-- **Include timestamps** for all updates
-- **Reference related tasks** and PRD sections
-- **Add troubleshooting sections** for complex procedures
-
-## 5. Communication Protocol
-
-### 5.1 Session Reporting
-
-- **Begin session** with status update based on `planning.md` and `tasks.md`
-- **End session** with summary of:
-  - Completed work
-  - New tasks discovered
-  - Current blockers
-  - Next session recommendations
-
-### 5.2 Decision Documentation
-
-- **Record** all significant decisions in `planning.md`
-- **Note** alternatives considered and rationale for choice
-- **Document** any assumptions made
-- **Flag** decisions needing stakeholder approval
-
-## 6. Quality Assurance
-
-### 6.1 Validation Checks
-
-**Before marking any task complete:**
-
-- Verify against PRD requirements
-- Test functionality (if applicable)
-- Check documentation is updated
-- Ensure no regression introduced
-
-### 6.2 Security Compliance
-
-- **Always verify** security requirements from PRD Section 4.5
-- **Check** VPN-only access for internal services
-- **Validate** authentication and authorization setup
-- **Confirm** monitoring integration
-
-## 7. File Structure Maintenance
-
-### 7.1 Required Files
-
-Ensure these files exist and are maintained:
-
-```
-project_root/
-├── Mail_Server_POC_PRD.md          # Master requirements document
-├── assistant_rules.md              # This file
-├── planning.md                     # Current plan and context
-├── tasks.md                        # Task tracking
-├── session_logs/                   # Individual session notes
-│   └── YYYY-MM-DD.md
-├── configs/                        # Configuration files
-├── scripts/                        # Automation scripts
-└── documentation/                  # Additional documentation
-```
-
-### 7.2 Version Control
-
-- **Track changes** to all key files
-- **Maintain backups** of critical configurations
-- **Use consistent naming** conventions
-- **Archive old versions** when major changes made
-
-## 8. Emergency Procedures
-
-### 8.1 When Blocked
-
-1. **Document** the blocker clearly in `tasks.md`
-2. **Note** attempted solutions
-3. **Escalate** to user with recommended options
-4. **Update** `planning.md` with impact assessment
-
-### 8.2 When Requirements Conflict
-
-1. **Reference** the PRD for clarification
-2. **Document** the conflict in `planning.md`
-3. **Present** options to user with recommendations
-4. **Update** documentation based on resolution
 
 ---
 
-## Session Logs
+## Session Summary - 2025-01-07
 
-### Recent Sessions
-
-#### Session: 2025-01-05 (Ansible Task Group 1.2 - System User Administration)
 **Duration:** ~4 hours  
-**Status:** ✅ Complete  
-**Focus:** Complete Ansible automation for user management, SSH configuration, and Docker installation
+**Focus:** Task Group 1.3 - System Hardening (Complete)  
+**Status:** ✅ All 5 tasks in Task Group 1.3 completed successfully
 
-**Key Achievements:**
-- ✅ Fixed and tested all Task Group 1.2 playbooks (tasks 1.2.1 through 1.2.7)
-- ✅ Resolved Debian 13 Docker installation issues (bookworm repo compatibility)
-- ✅ Fixed inventory credential parsing for multi-line secret files
-- ✅ Corrected SSH key architecture (Vultr key vs bastion key)
-- ✅ Removed premature root SSH disabling (moved to Task 1.3.1)
-- ✅ Fixed ansible.cfg SSH authentication issues (IdentitiesOnly=yes)
-- ✅ Successfully deployed complete user management automation
+### Tasks Completed
 
-**Critical Fixes Applied:**
-1. Inventory parsing: Use `head -n 1` for credential file with multiple lines
-2. Docker installation: Use slurp + regex for Debian codename detection
-3. SSH host keys: Handle OS reinstall with known_hosts cleanup
-4. Ansible.cfg: Use Vultr key with IdentitiesOnly=yes to prevent auth failures
-5. UID check logic: Fixed in create_admin_user.yml (use shell with || true)
-6. Gather facts: Enabled in modify_sudoers_nopasswd.yml for ansible_date_time
-7. Task 1.2.5: Fixed when clause syntax (use multiline format)
+#### Task 1.3.1 - Configure Basic System Hardening
+- **Status:** ✅ Complete
+- **What was done:**
+  - SSH hardened: Port changed to 2288, root login disabled, key-only authentication
+  - Modern cryptography enforced (curve25519, ChaCha20-Poly1305, HMAC-SHA2)
+  - UFW firewall configured: Default deny incoming, allow 2288/tcp
+  - Automatic security updates enabled (unattended-upgrades)
+  - Security banner added to SSH
+  - Configuration backups created
+- **Files created:**
+  - `task_1.3.1.yml` - Task wrapper
+  - `playbooks/system_hardening.yml` - Reusable playbook
+  - `playbooks/templates/sshd_config.j2` - SSH configuration
+  - `playbooks/templates/50unattended-upgrades.j2` - Auto-updates config
+  - `playbooks/templates/20auto-upgrades.j2` - Auto-upgrade schedule
+- **Critical change:** SSH port changed from 22 to 2288
 
-**Server Final State:**
-- ✅ phalkonadmin user (UID 1000, sudo group, docker group)
-- ✅ Passwordless sudo configured
-- ✅ SSH key authentication working (bastion key)
-- ✅ Docker 29.1.3 + Docker Compose v5.0.1 installed
-- ✅ Root SSH still enabled (will be disabled in Task 1.3.1)
-- ✅ linuxuser removed
+#### Task 1.3.5 - Install and Configure Fail2ban
+- **Status:** ✅ Complete
+- **What was done:**
+  - Fail2ban installed and configured
+  - SSH jail monitoring port 2288
+  - Ban policy: 3 attempts in 10 minutes = 1 hour ban
+  - Logging configured to /var/log/fail2ban.log
+  - Service enabled and started
+- **Files created:**
+  - `task_1.3.5.yml` - Task wrapper
+  - `playbooks/install_fail2ban.yml` - Reusable playbook
+  - `playbooks/templates/jail.local.j2` - Main fail2ban config
+  - `playbooks/templates/sshd.local.j2` - SSH jail config
 
-**Files Created/Updated:** 15 playbooks, ansible.cfg, inventory.yml, run scripts, README v3.0
+#### Task 1.3.2 - Integrate VPS into WireGuard VPN
+- **Status:** ✅ Complete
+- **What was done:**
+  - WireGuard installed and configured
+  - VPN IP assigned: 10.100.0.25/24
+  - Connected to peer: 144.202.76.243:51820
+  - IP forwarding enabled for VPN routing
+  - Service enabled at boot
+  - Secure credential extraction script created
+- **Files created:**
+  - `task_1.3.2.yml` - Task wrapper
+  - `playbooks/install_wireguard.yml` - Reusable playbook
+  - `playbooks/templates/wg0.conf.j2` - WireGuard config template
+  - `setup_wg_credentials.sh` - Secure credential extraction script
+  - `.gitignore` - Updated to protect secrets (wg0.conf, wg_credentials/)
+- **Security:** Credentials stored securely in `../wg_credentials/` (not hardcoded)
 
-**Next Session Priority:**
-- Begin Task Group 1.3: System Hardening
-  - 1.3.1: SSH hardening, firewall (UFW), automatic updates
-  - 1.3.2: WireGuard VPN integration
-  - 1.3.3: Network interfaces and DNS configuration
+#### Task 1.3.3 - Configure Network Interfaces (Simplified)
+- **Status:** ✅ Complete
+- **What was done:**
+  - Verified WireGuard interface (wg0) is up with correct IP
+  - Checked routing tables for VPN and default routes
+  - Tested VPN connectivity (ping 10.100.0.1)
+  - Tested internet connectivity
+  - Documented network configuration
+  - DNS configuration intentionally skipped (to be done when proper DNS server installed)
+- **Files created:**
+  - `task_1.3.3.yml` - Task wrapper
+  - `playbooks/verify_network_interfaces.yml` - Network verification playbook
 
-**Detailed Accomplishments:**
-- All 7 tasks in Task Group 1.2 successfully tested and working
-- Complete automation of user setup, SSH configuration, and Docker installation
-- Proper separation of concerns (Vultr key for Ansible, bastion key for operations)
-- Comprehensive troubleshooting documentation added to README
+#### Task 1.3.4 - SSH Dependency on WireGuard + VPN-Only Access
+- **Status:** ✅ Complete
+- **What was done:**
+  - Configured SSH service to start only after WireGuard is up
+  - Restricted SSH to listen only on VPN IP (10.100.0.25:2288)
+  - Updated UFW to allow SSH only from VPN network (10.100.0.0/24)
+  - Removed public SSH access from firewall
+  - Created emergency rollback script
+  - Systemd drop-in file created for dependency management
+- **Files created:**
+  - `task_1.3.4.yml` - Task wrapper
+  - `playbooks/configure_ssh_vpn_only.yml` - SSH VPN-only configuration playbook
+  - `/root/rollback_scripts/rollback_ssh_vpn_only.sh` - Emergency recovery script (on server)
+- **CRITICAL CHANGE:** SSH now ONLY accessible via VPN (10.100.0.25), not public IP
 
-**Technical Decisions:**
-1. Keep root SSH enabled during Task Group 1.2 for deployment flexibility
-2. Use Debian 12 (bookworm) Docker packages for Debian 13 (trixie) compatibility
-3. Two-tier SSH key architecture (Vultr for admin, bastion for automation)
-4. Environment variables for credential handling to support multi-line files
+### Infrastructure Updates
+
+#### Ansible Configuration
+- **ansible.cfg** - Updated to remove hardcoded user/key, respects inventory settings
+- **inventory.yml** - Enhanced with dynamic configuration via environment variables:
+  - Supports `ANSIBLE_REMOTE_PORT` (22 or 2288)
+  - Supports `ANSIBLE_REMOTE_USER` (root or phalkonadmin)
+  - Supports `ANSIBLE_PRIVATE_KEY_FILE` (Vultr key or bastion key)
+  - Supports `ANSIBLE_HOST` (public IP or VPN IP)
+- **run_task.sh** - Updated to display SSH port being used
+
+#### Documentation
+- **README.md** - Comprehensive documentation for all tasks:
+  - Complete Task 1.3.1 section (SSH hardening, firewall, updates)
+  - Complete Task 1.3.5 section (fail2ban)
+  - Complete Task 1.3.2 section (WireGuard VPN)
+  - Connection instructions for post-hardening
+  - Environment variable configuration guide
+  - Verification procedures for all tasks
+  - Troubleshooting guides
+- **tasks.md** - Updated with:
+  - Task 1.3.1 marked complete
+  - Task 1.3.2 marked complete  
+  - Task 1.3.3 marked complete
+  - Task 1.3.4 marked complete
+  - Task 1.3.5 marked complete
+  - Task Group 1.3 status: 100% complete (5 of 5 tasks)
+- Additional docs: FINAL_DELIVERY_SUMMARY.md, WG_CREDENTIALS_SETUP.md, etc.
+
+### Issues Resolved
+
+1. **Port 22 Deny Rule** - Removed from Task 1.3.1 (port blocking not needed with default-deny)
+2. **Ansible Connection After Hardening** - Fixed inventory.yml and ansible.cfg to support dynamic user/port/key
+3. **Fail2ban Configuration** - Fixed backup task to check file existence first
+4. **WireGuard Credentials** - Fixed file lookup paths (../../wg_credentials/ from playbooks/)
+5. **SSH "Too Many Authentication Failures"** - Added `-o IdentitiesOnly=yes` to all SSH commands
+6. **UFW Rule Deletion** - Fixed to use `ufw --force delete` command instead of module
+
+### Key Patterns Established
+
+1. **Task Structure:**
+   - Task wrappers (task_X.X.X.yml) with parameters
+   - Reusable playbooks with full logic
+   - Jinja2 templates for configuration files
+   - All following consistent pattern
+
+2. **Security Practices:**
+   - No hardcoded secrets in playbooks
+   - Credentials in separate files (.gitignore protected)
+   - Backup creation before modifications
+   - Rollback scripts for critical changes
+   - Comprehensive verification after changes
+
+3. **Documentation:**
+   - Complete usage instructions
+   - Verification procedures
+   - Troubleshooting guides
+   - Emergency recovery procedures
+   - Environment variable requirements
+
+### System State After Session
+
+**Server Access:**
+- SSH: Port 2288, VPN-only (10.100.0.25), key authentication only
+- User: phalkonadmin (root disabled)
+- VPN: Active on 10.100.0.25/24
+- Firewall: UFW enabled, default-deny incoming
+
+**Connection Command:**
+```bash
+ssh -p 2288 -o IdentitiesOnly=yes -i ~/SSH_KEYS_CAPITAN_TO_WORKERS/id_ed25519_common phalkonadmin@10.100.0.25
+```
+
+**Ansible Environment Variables (Required):**
+```bash
+export ANSIBLE_HOST=10.100.0.25
+export ANSIBLE_REMOTE_PORT=2288
+export ANSIBLE_REMOTE_USER=phalkonadmin
+export ANSIBLE_PRIVATE_KEY_FILE=~/SSH_KEYS_CAPITAN_TO_WORKERS/id_ed25519_common
+```
+
+**Services Running:**
+- SSH (port 2288, VPN-only)
+- WireGuard (wg0, 10.100.0.25/24)
+- UFW (firewall active)
+- fail2ban (monitoring SSH)
+- unattended-upgrades (automatic security updates)
+
+### Files Delivered (Total: 25 files)
+
+**Playbooks:**
+- task_1.3.1.yml, task_1.3.2.yml, task_1.3.3.yml, task_1.3.4.yml, task_1.3.5.yml
+- system_hardening.yml, install_wireguard.yml, verify_network_interfaces.yml
+- configure_ssh_vpn_only.yml, install_fail2ban.yml
+
+**Templates:**
+- sshd_config.j2, 50unattended-upgrades.j2, 20auto-upgrades.j2
+- wg0.conf.j2, jail.local.j2, sshd.local.j2
+
+**Infrastructure:**
+- ansible.cfg, inventory.yml, run_task.sh, .gitignore
+
+**Scripts:**
+- setup_wg_credentials.sh
+
+**Documentation:**
+- README.md, tasks.md, and various delivery/setup guides
+
+### Next Steps
+
+**Immediate:**
+- Task Group 1.4 - Directory Structure & Storage (3 tasks)
+  - Task 1.4.1: Create mail system directories
+  - Task 1.4.2: Set permissions and ownership
+  - Task 1.4.3: Configure disk quotas
+
+**Upcoming:**
+- Milestone 2: Core Mail Services (Postfix, Dovecot)
+- Milestone 3: Database & Web Interface (PostgreSQL, SOGo)
+
+### Lessons Learned
+
+1. **Always check file paths** - Relative paths differ when playbooks are in subdirectories
+2. **Test connectivity before critical changes** - VPN connectivity verified before restricting SSH
+3. **Provide rollback procedures** - Emergency recovery scripts critical for security changes
+4. **Use standard Ansible variables** - ANSIBLE_REMOTE_* instead of custom names
+5. **Document environment variables clearly** - Essential for task transitions
+6. **Verify, then apply** - Check mode useful but doesn't catch all issues (services not installed)
+
+### Project Status
+
+**Milestone 1 Progress:** ~85% Complete
+- ✅ Task Group 1.1: Initial Server Setup (Complete)
+- ✅ Task Group 1.2: System User Administration (Complete)
+- ✅ Task Group 1.3: System Hardening (Complete) ← This session
+- ⏳ Task Group 1.4: Directory Structure & Storage (Next)
+
+**Security Posture:** Significantly improved
+- SSH hardened and VPN-only
+- Firewall active with default-deny
+- Intrusion prevention active (fail2ban)
+- Automatic security updates enabled
+- VPN encryption for all administrative access
+
+**Infrastructure Quality:** Production-ready foundation
+- Consistent automation patterns
+- Comprehensive documentation
+- Emergency recovery procedures
+- Secure credential management
+- Modular, reusable playbooks
 
 ---
 
-#### Session: 2024-12-18 (Terraform Infrastructure Setup)
-**Duration:** ~3 hours  
-**Status:** ✅ Complete  
-**Focus:** Terraform foundation, Vultr integration, secure credential handling
-
-**Key Achievements:**
-- ✅ Created Vultr resource management scripts (9 scripts)
-- ✅ Fixed Terraform Vultr provider v2.x compatibility issues
-- ✅ Implemented secure credential extraction system
-- ✅ Generated comprehensive documentation (13 guides, ~85KB)
-- ✅ Automated backup schedule configuration
-- ✅ CSV auto-cleanup after documentation generation
-
-**Files Created:** 27 files (scripts, configs, documentation)
-
-**Issues Resolved:**
-- `enable_private_network` deprecated attribute (main.tf line 35)
-- Backup schedule requirement for enabled backups
-- Sensitive credential exposure in console output
-
-**Next Session Priority:**
-- Deploy first VPS instance
-- Test credential extraction
-- Begin system hardening (Task 1.1.2)
-
-**Detailed Log:** `session_logs/session_2024-12-18.md`
-
----
-
-## Quick Reference Checklist
-
-**Start of Session:**
-
-- [ ] Read `planning.md`
-- [ ] Check `tasks.md`
-- [ ] Review last session log
-
-**During Session:**
-
-- [ ] Reference PRD for requirements
-- [ ] Document commands and outputs
-- [ ] Add new tasks as discovered
-- [ ] Update relevant documentation
-
-**End of Session:**
-
-- [ ] Mark completed tasks
-- [ ] Update `planning.md` with progress
-- [ ] Create session log
-- [ ] Provide summary and next steps
-
-**File Updates Required:**
-
-- [ ] `tasks.md` - Task status
-- [ ] `planning.md` - Project status
-- [ ] Session log - Detailed activities
-- [ ] Component docs - As needed
-
----
-
-**Version:** 1.0  
-**Created:** 2025-12-15  
-**Based on PRD:** Mail_Server_POC_PRD.md v1.0  
-**Purpose:** Ensure consistent project execution and documentation
