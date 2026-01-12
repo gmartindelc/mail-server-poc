@@ -1,0 +1,139 @@
+---
+# Playbook: Create Mail System Directory Structure
+# Purpose: Create all required directories for mail storage and PostgreSQL
+# Task: 1.4.1
+# 
+# Directory Structure Created:
+# Mail Storage:
+#   /var/mail/vmail/          - Virtual mail storage (user mailboxes)
+#   /var/mail/queue/          - Mail queue (incoming/outgoing)
+#   /var/mail/backups/        - Mail system backups
+#
+# PostgreSQL (Docker Container Volumes):
+#   /opt/postgres/            - PostgreSQL container base directory
+#   /opt/postgres/data/       - Volume mount: PostgreSQL data directory
+#   /opt/postgres/wal_archive/ - Volume mount: PostgreSQL WAL archives
+#   /opt/postgres/backups/    - PostgreSQL dumps and backup scripts
+#
+# Notes:
+#   - PostgreSQL directories are Docker volume mount points
+#   - Container image: postgres:17-alpine
+#   - Container will bind to VPN IP only (10.100.0.25:5432)
+#   - Ownership will be set in Task 1.4.2 for container UID compatibility
+
+- name: Create mail storage base directory
+  ansible.builtin.file:
+    path: /var/mail
+    state: directory
+    mode: '0755'
+    owner: root
+    group: root
+
+- name: Create mail system subdirectories
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    mode: '0755'
+    owner: root
+    group: root
+  loop:
+    - /var/mail/vmail
+    - /var/mail/queue
+    - /var/mail/backups
+  register: mail_dirs_created
+
+- name: Create PostgreSQL base directory
+  ansible.builtin.file:
+    path: /opt/postgres
+    state: directory
+    mode: '0755'
+    owner: root
+    group: root
+  register: postgres_base_created
+
+- name: Create PostgreSQL container volume mount directories
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    mode: '0755'
+    owner: root
+    group: root
+  loop:
+    - /opt/postgres/data
+    - /opt/postgres/wal_archive
+    - /opt/postgres/backups
+  register: postgres_dirs_created
+
+- name: Verify all mail directories exist
+  ansible.builtin.stat:
+    path: "{{ item }}"
+  loop:
+    - /var/mail/vmail
+    - /var/mail/queue
+    - /var/mail/backups
+  register: mail_dir_verification
+
+- name: Verify all PostgreSQL directories exist
+  ansible.builtin.stat:
+    path: "{{ item }}"
+  loop:
+    - /opt/postgres/data
+    - /opt/postgres/wal_archive
+    - /opt/postgres/backups
+  register: postgres_dir_verification
+
+- name: Assert all mail directories were created successfully
+  ansible.builtin.assert:
+    that:
+      - item.stat.exists
+      - item.stat.isdir
+    fail_msg: "Directory {{ item.item }} was not created successfully"
+    success_msg: "Directory {{ item.item }} verified"
+  loop: "{{ mail_dir_verification.results }}"
+  loop_control:
+    label: "{{ item.item }}"
+
+- name: Assert all PostgreSQL directories were created successfully
+  ansible.builtin.assert:
+    that:
+      - item.stat.exists
+      - item.stat.isdir
+    fail_msg: "Directory {{ item.item }} was not created successfully"
+    success_msg: "Directory {{ item.item }} verified"
+  loop: "{{ postgres_dir_verification.results }}"
+  loop_control:
+    label: "{{ item.item }}"
+
+- name: Display task completion summary
+  ansible.builtin.debug:
+    msg:
+      - "=========================================="
+      - "Task 1.4.1 - Directory Creation Complete"
+      - "=========================================="
+      - ""
+      - "Mail System Directories:"
+      - "  ✓ /var/mail/vmail/          (Virtual mail storage)"
+      - "  ✓ /var/mail/queue/          (Mail queue)"
+      - "  ✓ /var/mail/backups/        (Mail system backups)"
+      - ""
+      - "PostgreSQL Container Directories:"
+      - "  ✓ /opt/postgres/data/       (PostgreSQL data volume)"
+      - "  ✓ /opt/postgres/wal_archive/ (PostgreSQL WAL archives)"
+      - "  ✓ /opt/postgres/backups/    (PostgreSQL dump backups)"
+      - ""
+      - "Current Status:"
+      - "  - All directories created with root:root ownership"
+      - "  - All directories have 0755 permissions"
+      - ""
+      - "Next Steps (Task 1.4.2):"
+      - "  - Create vmail system user (UID 5000)"
+      - "  - Create postgres system user (UID 999)"
+      - "  - Set ownership: vmail:vmail on mail directories"
+      - "  - Set ownership: postgres:postgres on PostgreSQL directories"
+      - "  - Configure appropriate permissions (750/700)"
+      - ""
+      - "PostgreSQL Container Notes:"
+      - "  - Image: postgres:17-alpine"
+      - "  - Network: VPN-only binding (10.100.0.25:5432)"
+      - "  - User: postgres (UID 999 - standard container UID)"
+      - "=========================================="
