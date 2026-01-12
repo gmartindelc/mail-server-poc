@@ -1,6 +1,324 @@
 
 ---
 
+## Session Summary - 2026-01-12
+
+**Duration:** ~6 hours  
+**Focus:** Task Group 1.4 (Complete) + Task 2.1.1 (Database Container)  
+**Status:** ✅ Milestone 1 Complete (100%) + First production service deployed
+
+### Tasks Completed
+
+#### Task 1.4.1 - Create Mail System Directory Structure
+- **Status:** ✅ Complete
+- **What was done:**
+  - Created mail storage directories: `/var/mail/vmail/`, `/var/mail/queue/`, `/var/mail/backups/`
+  - Created PostgreSQL container volume directories: `/opt/postgres/data/`, `/opt/postgres/wal_archive/`, `/opt/postgres/backups/`
+  - Initial ownership: `root:root`, permissions: `0755`
+  - All directories verified to exist
+- **Files created:**
+  - `task_1.4.1.yml` - Task wrapper
+  - `create_mail_directories.yml` - Reusable directory creation playbook
+  - Complete documentation package (7 files total)
+- **Issues resolved:**
+  - Path fix: Moved both playbook files to `playbooks/` directory (no subdirectory nesting)
+  - Check mode limitations: Directory verification fails in check mode (expected behavior)
+
+#### Task 1.4.2 - Set Proper Permissions and Ownership
+- **Status:** ✅ Complete
+- **What was done:**
+  - Created `vmail` system user (UID 5000) for virtual mail storage
+  - Created `postgres` system user (UID 999) for PostgreSQL container compatibility
+  - Set ownership on mail directories: `vmail:vmail`
+  - Set ownership on PostgreSQL directories: `postgres:postgres`
+  - Configured permissions:
+    - Mail directories: `750` (rwxr-x---)
+    - PostgreSQL data: `700` (rwx------) - Required by PostgreSQL
+    - PostgreSQL WAL/backups: `750` (rwxr-x---)
+- **Files created:**
+  - `task_1.4.2.yml` - Task wrapper
+  - `configure_directory_permissions.yml` - User creation and permissions playbook
+  - Comprehensive documentation
+- **Issues resolved:**
+  - Simplified user creation logic: Removed complex getent checks, let Ansible's user module handle idempotency
+  - Check mode limitations: Similar to Task 1.4.1, users simulated but not created causes ownership failures (expected behavior)
+- **Critical design decisions:**
+  - UID 5000 for vmail: Avoids system UID conflicts
+  - UID 999 for postgres: **Critical** - matches PostgreSQL Docker container standard for volume mount compatibility
+
+#### Task 1.4.3 - Prepare Disk Quota System (Documentation Approach)
+- **Status:** ✅ Complete
+- **What was done:**
+  - Installed quota management tools (`quota`, `quotatool`)
+  - Created enablement scripts for future production use
+  - Generated comprehensive documentation
+  - Checked filesystem status
+  - **Did NOT enable quotas** (PoC phase - not needed yet)
+- **Files created:**
+  - `task_1.4.3.yml` - Task wrapper
+  - `prepare_disk_quotas.yml` - Quota preparation playbook
+  - Scripts created on server:
+    - `/opt/mail_server/scripts/quota/enable_quotas.sh` - One-click enablement
+    - `/opt/mail_server/scripts/quota/check_quotas.sh` - Status monitoring
+    - `/opt/mail_server/scripts/quota/set_quota.sh` - User quota management
+    - `/opt/mail_server/scripts/quota/README.md` - Complete documentation
+- **Issues resolved:**
+  - Template vs copy: Fixed template reference error by using copy module with inline content
+  - Removed duplicate script creation task
+- **Approach rationale:**
+  - PoC phase: Single-user testing, no storage abuse risk
+  - Tools ready: Can enable with one script when transitioning to production
+  - Filesystem preservation: No `/etc/fstab` modifications during testing
+
+#### Task 2.1.1 - Deploy PostgreSQL Container
+- **Status:** ✅ Complete
+- **What was done:**
+  - Deployed PostgreSQL 17 in Docker container (postgres:17-alpine)
+  - Configured VPN-only access (binds to 10.100.0.25:5432)
+  - Set up persistent volume mounts
+  - Generated secure 32-character random password
+  - Created management scripts and documentation
+  - Configured UFW firewall rule (allow from VPN network only)
+  - Verified container health and database connectivity
+- **Files created:**
+  - `task_2.1.1.yml` - Task wrapper
+  - `deploy_postgresql_container.yml` - PostgreSQL deployment playbook
+  - On server:
+    - `/opt/mail_server/postgres/docker-compose.yml` - Container definition
+    - `/opt/mail_server/postgres/.env` - Database credentials (secure)
+    - `/opt/mail_server/postgres/.env.example` - Template
+    - `/opt/mail_server/postgres/postgresql.conf` - PostgreSQL configuration
+    - `/opt/mail_server/postgres/scripts/manage.sh` - Container management
+    - `/opt/mail_server/postgres/scripts/test_connection.sh` - Connection testing
+    - `/opt/mail_server/postgres/scripts/get_password.sh` - Credential retrieval
+    - `/root/postgres_credentials.txt` - Backup credentials
+- **Issues resolved:**
+  - Jinja2 template escaping: Used `jq` instead of Docker Go template format to avoid Ansible template conflicts
+  - docker-compose version warning: Removed obsolete `version: '3.8'` line
+  - Connection test: Fixed password passing using PGPASSWORD environment variable, then simplified to Unix socket test
+  - jq installation: Added jq package installation for JSON parsing
+- **Container configuration:**
+  - Image: postgres:17-alpine
+  - Container name: mailserver-postgres
+  - User: postgres (UID 999)
+  - Network: Host mode with VPN IP binding
+  - Resources: 2GB RAM limit, 1.5 CPU
+  - Health checks: Every 10s, 5 retries
+  - Restart: unless-stopped
+- **Security features:**
+  - VPN-only binding (10.100.0.25:5432)
+  - Strong password (32 chars, base64)
+  - SCRAM-SHA-256 authentication
+  - UFW: Allow only from 10.100.0.0/24
+  - Non-root container execution
+  - Secure credential storage (0600 permissions)
+
+### Infrastructure Updates
+
+#### Project Structure
+- **Task Group 1.4** complete: All directory structure and storage preparation done
+- **Milestone 1** complete: 100% (Task Groups 1.1, 1.2, 1.3, 1.4)
+- **Milestone 2** started: First production service deployed (PostgreSQL)
+
+#### Documentation
+- **README_TASK_1.4.1.md** - Complete task documentation for directory creation
+- **README_TASK_1.4.2.md** - Complete task documentation for permissions
+- **README_TASK_1.4.3.md** - Complete task documentation for quota preparation
+- **README_TASK_2.1.1.md** - Complete task documentation for PostgreSQL deployment
+- **DIRECTORY_STRUCTURE.md** - Visual directory diagrams and structure
+- **README_SECTION_TASK_GROUP_1.4.md** - Section to add to main ansible README
+- Multiple delivery summaries and quick reference guides
+
+#### Scripts and Tools
+- **run_all_tasks_1.4.sh** - Sequential execution of all Task 1.4 tasks
+- Quota management scripts on server (enable, check, set)
+- PostgreSQL management scripts on server (manage, test, get password)
+
+### Issues Resolved
+
+1. **Task 1.4.1 - Path Configuration**
+   - Fixed playbook paths to work correctly with project structure
+   - Both files in same directory to avoid path doubling
+
+2. **Task 1.4.2 - User Creation Logic**
+   - Simplified from complex conditional to relying on Ansible's user module idempotency
+   - Fixed display message handling for skipped tasks
+
+3. **Task 1.4.3 - Template vs Copy**
+   - Fixed template reference that didn't exist
+   - Removed duplicate script creation
+
+4. **Task 2.1.1 - Multiple Fixes**
+   - Jinja2/Docker Go template conflict resolved with jq
+   - Removed obsolete docker-compose version line
+   - Fixed password passing for connection tests
+   - Added jq installation for JSON parsing
+
+### Key Patterns Established
+
+1. **Task Structure (Continued):**
+   - Task wrappers with minimal logic
+   - Reusable playbooks with full implementation
+   - Comprehensive verification and error handling
+   - Detailed completion summaries
+
+2. **Check Mode Limitations:**
+   - Tasks that create resources (directories, users) have check mode limitations
+   - Verification steps fail in check mode when resources don't actually exist
+   - Solution: Either skip verification in check mode or document limitations
+   - Many tasks are safe to run directly due to idempotency
+
+3. **PostgreSQL Container Patterns:**
+   - VPN-only binding for security
+   - UID matching between host and container (UID 999)
+   - Secure credential generation and storage
+   - Management scripts for operations
+   - Health checks for monitoring
+
+4. **Documentation Approach:**
+   - For PoC phase: Documentation-based approach acceptable (Task 1.4.3)
+   - Tools ready but not activated yet
+   - Can enable with single script when needed
+   - Reduces complexity during testing phase
+
+### System State After Session
+
+**Server Access:**
+- SSH: Port 2288, VPN-only (10.100.0.25), key authentication only
+- User: phalkonadmin (root disabled)
+- VPN: Active on 10.100.0.25/24
+- Firewall: UFW enabled, default-deny incoming
+
+**Connection Command:**
+```bash
+ssh -p 2288 -o IdentitiesOnly=yes -i ~/SSH_KEYS_CAPITAN_TO_WORKERS/id_ed25519_common phalkonadmin@10.100.0.25
+```
+
+**Ansible Environment Variables (Required):**
+```bash
+export ANSIBLE_HOST=10.100.0.25
+export ANSIBLE_REMOTE_PORT=2288
+export ANSIBLE_REMOTE_USER=phalkonadmin
+export ANSIBLE_PRIVATE_KEY_FILE=~/SSH_KEYS_CAPITAN_TO_WORKERS/id_ed25519_common
+```
+
+**Services Running:**
+- SSH (port 2288, VPN-only)
+- WireGuard (wg0, 10.100.0.25/24)
+- UFW (firewall active)
+- fail2ban (monitoring SSH)
+- unattended-upgrades (automatic security updates)
+- **PostgreSQL 17** (mailserver-postgres container, VPN-only on 10.100.0.25:5432) ← NEW
+
+**Directory Structure:**
+```
+/var/mail/
+├── vmail/          # vmail:vmail, 750
+├── queue/          # vmail:vmail, 750
+└── backups/        # vmail:vmail, 750
+
+/opt/postgres/
+├── data/           # postgres:postgres, 700 (PostgreSQL data)
+├── wal_archive/    # postgres:postgres, 750 (WAL files)
+└── backups/        # postgres:postgres, 750 (Backups)
+
+/opt/mail_server/
+├── postgres/
+│   ├── docker-compose.yml
+│   ├── .env (credentials)
+│   ├── postgresql.conf
+│   └── scripts/ (management tools)
+└── scripts/
+    └── quota/ (quota management tools)
+```
+
+**System Users:**
+- `vmail` (UID 5000) - Virtual mail storage owner
+- `postgres` (UID 999) - PostgreSQL container user
+
+**Database:**
+- Database: mailserver
+- User: postgres
+- Password: Stored in /opt/mail_server/postgres/.env and /root/postgres_credentials.txt
+- Connection: postgresql://postgres:<password>@10.100.0.25:5432/mailserver
+- Access: VPN-only (10.100.0.0/24)
+
+### Files Delivered (Total: 15 files this session)
+
+**Playbooks:**
+- task_1.4.1.yml, task_1.4.2.yml, task_1.4.3.yml, task_2.1.1.yml
+- create_mail_directories.yml, configure_directory_permissions.yml
+- prepare_disk_quotas.yml, deploy_postgresql_container.yml
+
+**Documentation:**
+- README_TASK_1.4.1.md, README_TASK_1.4.2.md, README_TASK_1.4.3.md, README_TASK_2.1.1.md
+- DIRECTORY_STRUCTURE.md, README_SECTION_TASK_GROUP_1.4.md
+- Multiple delivery summaries and quick reference guides
+
+**Scripts (on server):**
+- /opt/mail_server/scripts/quota/ - Quota management scripts
+- /opt/mail_server/postgres/scripts/ - Database management scripts
+- run_all_tasks_1.4.sh - Sequential task execution
+
+### Next Steps
+
+**Immediate (Task 2.1.2):**
+- Create database schema for mail server
+- Create tables: virtual_domains, virtual_users, virtual_aliases
+- Create PostgreSQL users: postfix, dovecot, sogo, mailadmin
+- Configure permissions and access
+
+**Upcoming (Milestone 2):**
+- Task 2.1.3: Configure PostgreSQL backups and WAL archiving
+- Task 2.1.4: Verify PostgreSQL container and connectivity
+- Task Group 2.2: Core Mail Services (Postfix, Dovecot)
+
+### Lessons Learned
+
+1. **Jinja2 Template Escaping:** Avoid Docker Go templates in Ansible shell commands - use jq or alternative approaches
+2. **Check Mode Limitations:** Directory and user creation have inherent check mode limitations - document rather than fight
+3. **UID Matching Critical:** PostgreSQL container requires UID 999 on host for volume mounts - not optional
+4. **Documentation Approach Valid:** For PoC, preparing tools without activation is acceptable and reduces complexity
+5. **VPN-Only Pattern:** Consistently binding services to VPN IP (10.100.0.25) establishes strong security baseline
+6. **Password Management:** Generate strong passwords, store securely (0600), provide retrieval scripts
+7. **Management Scripts Essential:** Operational tasks (start/stop/logs/password) should have dedicated scripts
+8. **Container Health Checks:** Always implement and verify health checks for production services
+
+### Project Status
+
+**Milestone 1 Progress:** ✅ 100% Complete
+- ✅ Task Group 1.1: VPS Provisioning (Complete)
+- ✅ Task Group 1.2: System User Administration (Complete)
+- ✅ Task Group 1.3: System Hardening (Complete)
+- ✅ Task Group 1.4: Directory Structure & Storage (Complete) ← This session
+
+**Milestone 2 Progress:** 🚧 25% Complete (1 of 4 tasks in Task Group 2.1)
+- ✅ Task 2.1.1: PostgreSQL container deployed ← This session
+- ⏳ Task 2.1.2: Database schema creation (Next)
+- ⏳ Task 2.1.3: Backup configuration
+- ⏳ Task 2.1.4: Verification
+
+**Security Posture:** Production-ready foundation with first live service
+- SSH hardened and VPN-only
+- Firewall active with default-deny
+- Intrusion prevention active (fail2ban)
+- Automatic security updates enabled
+- VPN encryption for all administrative access
+- Database secured with VPN-only access and strong authentication
+
+**Infrastructure Quality:** Mature automation and operational tooling
+- Consistent automation patterns across all tasks
+- Comprehensive documentation for every component
+- Operational management scripts for services
+- Secure credential management
+- Emergency recovery procedures
+- Idempotent, reusable playbooks
+
+**Production Services Deployed:** 1
+- PostgreSQL 17 database (VPN-only, containerized, healthy)
+
+---
+
 ## Session Summary - 2025-01-07
 
 **Duration:** ~4 hours  
@@ -237,4 +555,3 @@ export ANSIBLE_PRIVATE_KEY_FILE=~/SSH_KEYS_CAPITAN_TO_WORKERS/id_ed25519_common
 - Modular, reusable playbooks
 
 ---
-
