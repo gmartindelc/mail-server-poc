@@ -1,0 +1,13 @@
+---
+# Task 2.1.1: Create PostgreSQL Docker Compose configuration
+# Dependencies: Task 1.4.2 (postgres user created with UID 999)
+# Purpose: Deploy PostgreSQL 17 database container with VPN-only access
+# Estimated Duration: 30 minutes
+
+- name: Task 2.1.1 - Deploy PostgreSQL Container
+  hosts: mail_server
+  become: yes
+  
+  tasks:
+    - name: Include PostgreSQL deployment playbook
+      ansible.builtin.include_tasks: deploy_postgresql_container.yml

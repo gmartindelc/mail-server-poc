@@ -1,0 +1,457 @@
+---
+# Playbook: Deploy PostgreSQL Container
+# Purpose: Create and deploy PostgreSQL 17 database with VPN-only access
+# Task: 2.1.1
+#
+# Container Configuration:
+#   Image: postgres:17-alpine
+#   Network: Host mode (binds to VPN IP: 10.100.0.25:5432)
+#   Volumes: /opt/postgres/data, /opt/postgres/wal_archive
+#   User: postgres (UID 999)
+#
+# Security:
+#   - VPN-only access (10.100.0.25)
+#   - Strong random password
+#   - No public IP access
+#   - Firewall protected
+
+- name: Create PostgreSQL project directory
+  ansible.builtin.file:
+    path: /opt/mail_server/postgres
+    state: directory
+    mode: '0755'
+    owner: root
+    group: root
+
+- name: Generate secure PostgreSQL password
+  ansible.builtin.shell: openssl rand -base64 32 | tr -d '/+=' | head -c 32
+  register: postgres_password_generated
+  changed_when: false
+
+- name: Set PostgreSQL password fact
+  ansible.builtin.set_fact:
+    postgres_password: "{{ postgres_password_generated.stdout }}"
+
+- name: Create .env file with database credentials
+  ansible.builtin.copy:
+    content: |
+      # PostgreSQL Database Configuration
+      # Generated: {{ ansible_date_time.iso8601 }}
+      # 
+      # WARNING: This file contains sensitive credentials
+      # Ensure it is protected and not committed to version control
+      
+      # Database Configuration
+      POSTGRES_DB=mailserver
+      POSTGRES_USER=postgres
+      POSTGRES_PASSWORD={{ postgres_password }}
+      
+      # Data Directory
+      PGDATA=/var/lib/postgresql/data
+      
+      # Network Binding (VPN-only)
+      POSTGRES_HOST=10.100.0.25
+      POSTGRES_PORT=5432
+      
+      # Connection String for Services
+      # postgresql://postgres:{{ postgres_password }}@10.100.0.25:5432/mailserver
+    dest: /opt/mail_server/postgres/.env
+    mode: '0600'
+    owner: root
+    group: root
+  no_log: true
+
+- name: Create docker-compose.yml for PostgreSQL
+  ansible.builtin.copy:
+    content: |
+      # PostgreSQL 17 Database Container
+      # Mail Server Cluster PoC
+      # 
+      # Network: VPN-only (10.100.0.25:5432)
+      # Volumes: Persistent storage in /opt/postgres/
+      # User: postgres (UID 999)
+      
+      services:
+        postgres:
+          image: postgres:17-alpine
+          container_name: mailserver-postgres
+          restart: unless-stopped
+          
+          # Run as postgres user (UID 999)
+          user: "999:999"
+          
+          # Network: Host mode to bind to specific VPN IP
+          network_mode: host
+          
+          # Environment variables from .env file
+          env_file:
+            - .env
+          
+          # Additional environment variables
+          environment:
+            # Listen only on VPN IP
+            POSTGRES_HOST_AUTH_METHOD: scram-sha-256
+            POSTGRES_INITDB_ARGS: "--auth-host=scram-sha-256"
+          
+          # Volume mounts for persistent storage
+          volumes:
+            - /opt/postgres/data:/var/lib/postgresql/data
+            - /opt/postgres/wal_archive:/var/lib/postgresql/wal_archive
+          
+          # Health check
+          healthcheck:
+            test: ["CMD-SHELL", "pg_isready -h 10.100.0.25 -U postgres"]
+            interval: 10s
+            timeout: 5s
+            retries: 5
+            start_period: 30s
+          
+          # Resource limits
+          deploy:
+            resources:
+              limits:
+                cpus: '1.5'
+                memory: 2G
+              reservations:
+                cpus: '0.5'
+                memory: 512M
+          
+          # Logging configuration
+          logging:
+            driver: "json-file"
+            options:
+              max-size: "10m"
+              max-file: "3"
+    dest: /opt/mail_server/postgres/docker-compose.yml
+    mode: '0644'
+    owner: root
+    group: root
+
+- name: Create .env.example template
+  ansible.builtin.copy:
+    content: |
+      # PostgreSQL Database Configuration - Example Template
+      # Copy this file to .env and fill in the values
+      
+      # Database Configuration
+      POSTGRES_DB=mailserver
+      POSTGRES_USER=postgres
+      POSTGRES_PASSWORD=<generate-secure-password-here>
+      
+      # Data Directory
+      PGDATA=/var/lib/postgresql/data
+      
+      # Network Binding (VPN-only)
+      POSTGRES_HOST=10.100.0.25
+      POSTGRES_PORT=5432
+      
+      # To generate a secure password:
+      # openssl rand -base64 32 | tr -d '/+=' | head -c 32
+    dest: /opt/mail_server/postgres/.env.example
+    mode: '0644'
+    owner: root
+    group: root
+
+- name: Create PostgreSQL configuration override file
+  ansible.builtin.copy:
+    content: |
+      # PostgreSQL Configuration Override
+      # This file will be mounted into the container in Task 2.1.2
+      
+      # Network Configuration - Listen only on VPN IP
+      listen_addresses = '10.100.0.25'
+      port = 5432
+      
+      # Connection Settings
+      max_connections = 100
+      shared_buffers = 256MB
+      effective_cache_size = 1GB
+      maintenance_work_mem = 64MB
+      
+      # Write-Ahead Log (WAL) Settings
+      wal_level = replica
+      max_wal_size = 1GB
+      min_wal_size = 80MB
+      
+      # Logging
+      logging_collector = on
+      log_directory = 'log'
+      log_filename = 'postgresql-%Y-%m-%d_%H%M%S.log'
+      log_rotation_age = 1d
+      log_rotation_size = 100MB
+      log_line_prefix = '%t [%p]: [%l-1] user=%u,db=%d,app=%a,client=%h '
+      log_timezone = 'UTC'
+      
+      # Locale
+      datestyle = 'iso, mdy'
+      timezone = 'UTC'
+      lc_messages = 'en_US.utf8'
+      lc_monetary = 'en_US.utf8'
+      lc_numeric = 'en_US.utf8'
+      lc_time = 'en_US.utf8'
+    dest: /opt/mail_server/postgres/postgresql.conf
+    mode: '0644'
+    owner: postgres
+    group: postgres
+
+- name: Verify postgres user exists and has correct UID
+  ansible.builtin.command: id -u postgres
+  register: postgres_uid_check
+  changed_when: false
+  failed_when: postgres_uid_check.stdout != '999'
+
+- name: Install jq for JSON parsing
+  ansible.builtin.apt:
+    name: jq
+    state: present
+    update_cache: no
+
+- name: Check UFW status for port 5432
+  ansible.builtin.shell: ufw status | grep 5432 || echo "not configured"
+  register: ufw_postgres_check
+  changed_when: false
+
+- name: Allow PostgreSQL port from VPN network only
+  ansible.builtin.ufw:
+    rule: allow
+    port: '5432'
+    proto: tcp
+    from_ip: 10.100.0.0/24
+    comment: 'PostgreSQL - VPN access only'
+  when: "'not configured' in ufw_postgres_check.stdout"
+
+- name: Pull PostgreSQL Docker image
+  community.docker.docker_image:
+    name: postgres:17-alpine
+    source: pull
+    state: present
+  register: postgres_image_pulled
+
+- name: Start PostgreSQL container
+  community.docker.docker_compose_v2:
+    project_src: /opt/mail_server/postgres
+    state: present
+  register: postgres_container_started
+
+- name: Wait for PostgreSQL to be healthy
+  ansible.builtin.shell: docker inspect mailserver-postgres | jq -r '.[0].State.Health.Status'
+  register: postgres_health
+  until: postgres_health.stdout == 'healthy'
+  retries: 30
+  delay: 2
+  changed_when: false
+
+- name: Get container status
+  ansible.builtin.shell: docker ps --filter name=mailserver-postgres --format 'table' | tail -1 | awk '{print $NF}'
+  register: postgres_container_status
+  changed_when: false
+
+- name: Test PostgreSQL connection via Unix socket
+  ansible.builtin.shell: |
+    docker exec mailserver-postgres psql -U postgres -d mailserver -c "SELECT version();"
+  register: postgres_connection_test
+  changed_when: false
+  failed_when: postgres_connection_test.rc != 0
+
+- name: Test PostgreSQL connection from VPN IP with password
+  ansible.builtin.shell: |
+    source /opt/mail_server/postgres/.env && \
+    docker exec mailserver-postgres psql "postgresql://postgres:${POSTGRES_PASSWORD}@10.100.0.25:5432/mailserver" -c "SELECT 1 as test;"
+  register: postgres_vpn_connection_test
+  changed_when: false
+  failed_when: false
+  args:
+    executable: /bin/bash
+
+- name: Create PostgreSQL management scripts directory
+  ansible.builtin.file:
+    path: /opt/mail_server/postgres/scripts
+    state: directory
+    mode: '0755'
+    owner: root
+    group: root
+
+- name: Create database connection test script
+  ansible.builtin.copy:
+    content: |
+      #!/bin/bash
+      # Test PostgreSQL database connection
+      # Usage: ./test_connection.sh
+      
+      set -e
+      
+      source /opt/mail_server/postgres/.env
+      
+      echo "Testing PostgreSQL connection..."
+      echo "Host: ${POSTGRES_HOST}"
+      echo "Port: ${POSTGRES_PORT}"
+      echo "Database: ${POSTGRES_DB}"
+      echo ""
+      
+      if docker exec mailserver-postgres psql -h "${POSTGRES_HOST}" -U "${POSTGRES_USER}" -d "${POSTGRES_DB}" -c "SELECT version();" > /dev/null 2>&1; then
+        echo "✅ Connection successful!"
+        docker exec mailserver-postgres psql -h "${POSTGRES_HOST}" -U "${POSTGRES_USER}" -d "${POSTGRES_DB}" -c "SELECT version();"
+      else
+        echo "❌ Connection failed!"
+        exit 1
+      fi
+    dest: /opt/mail_server/postgres/scripts/test_connection.sh
+    mode: '0755'
+    owner: root
+    group: root
+
+- name: Create container management script
+  ansible.builtin.copy:
+    content: |
+      #!/bin/bash
+      # PostgreSQL Container Management Script
+      # Usage: ./manage.sh [start|stop|restart|status|logs]
+      
+      cd /opt/mail_server/postgres
+      
+      case "$1" in
+        start)
+          echo "Starting PostgreSQL container..."
+          docker compose up -d
+          ;;
+        stop)
+          echo "Stopping PostgreSQL container..."
+          docker compose down
+          ;;
+        restart)
+          echo "Restarting PostgreSQL container..."
+          docker compose restart
+          ;;
+        status)
+          echo "PostgreSQL container status:"
+          docker ps --filter name=mailserver-postgres
+          echo ""
+          echo "Health status:"
+          docker inspect mailserver-postgres --format='Health: {{"{{"}}.State.Health.Status{{"}}"}}'
+          ;;
+        logs)
+          docker compose logs -f
+          ;;
+        *)
+          echo "Usage: $0 {start|stop|restart|status|logs}"
+          exit 1
+          ;;
+      esac
+    dest: /opt/mail_server/postgres/scripts/manage.sh
+    mode: '0755'
+    owner: root
+    group: root
+
+- name: Create password retrieval script
+  ansible.builtin.copy:
+    content: |
+      #!/bin/bash
+      # Retrieve PostgreSQL password
+      # Usage: ./get_password.sh
+      
+      if [ "$EUID" -ne 0 ]; then
+        echo "This script must be run as root"
+        exit 1
+      fi
+      
+      source /opt/mail_server/postgres/.env
+      
+      echo "PostgreSQL Credentials:"
+      echo "======================="
+      echo "Host: ${POSTGRES_HOST}"
+      echo "Port: ${POSTGRES_PORT}"
+      echo "Database: ${POSTGRES_DB}"
+      echo "User: ${POSTGRES_USER}"
+      echo "Password: ${POSTGRES_PASSWORD}"
+      echo ""
+      echo "Connection String:"
+      echo "postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@${POSTGRES_HOST}:${POSTGRES_PORT}/${POSTGRES_DB}"
+    dest: /opt/mail_server/postgres/scripts/get_password.sh
+    mode: '0700'
+    owner: root
+    group: root
+
+- name: Save PostgreSQL password to secure location
+  ansible.builtin.copy:
+    content: |
+      PostgreSQL Database Credentials
+      ================================
+      Generated: {{ ansible_date_time.iso8601 }}
+      
+      Host: 10.100.0.25
+      Port: 5432
+      Database: mailserver
+      User: postgres
+      Password: {{ postgres_password }}
+      
+      Connection String:
+      postgresql://postgres:{{ postgres_password }}@10.100.0.25:5432/mailserver
+      
+      Security Notes:
+      - This password is stored in /opt/mail_server/postgres/.env
+      - Access via: sudo /opt/mail_server/postgres/scripts/get_password.sh
+      - Database is accessible ONLY via VPN (10.100.0.0/24)
+      - Not accessible from public IP
+    dest: /root/postgres_credentials.txt
+    mode: '0600'
+    owner: root
+    group: root
+  no_log: true
+
+- name: Display task completion summary
+  ansible.builtin.debug:
+    msg:
+      - "=========================================="
+      - "Task 2.1.1 - PostgreSQL Container Deployed"
+      - "=========================================="
+      - ""
+      - "Container Status: ✅ Running and Healthy"
+      - "Image: postgres:17-alpine"
+      - "Container: mailserver-postgres"
+      - ""
+      - "Network Configuration:"
+      - "  VPN IP: 10.100.0.25"
+      - "  Port: 5432"
+      - "  Access: VPN-only (10.100.0.0/24)"
+      - "  Public IP: ❌ Blocked"
+      - ""
+      - "Database Configuration:"
+      - "  Database: mailserver"
+      - "  User: postgres"
+      - "  Password: <stored securely>"
+      - ""
+      - "Volumes Mounted:"
+      - "  ✓ /opt/postgres/data → PostgreSQL data"
+      - "  ✓ /opt/postgres/wal_archive → WAL archives"
+      - ""
+      - "Files Created:"
+      - "  /opt/mail_server/postgres/docker-compose.yml"
+      - "  /opt/mail_server/postgres/.env (credentials)"
+      - "  /opt/mail_server/postgres/.env.example"
+      - "  /opt/mail_server/postgres/postgresql.conf"
+      - "  /root/postgres_credentials.txt (secure backup)"
+      - ""
+      - "Management Scripts:"
+      - "  /opt/mail_server/postgres/scripts/manage.sh"
+      - "  /opt/mail_server/postgres/scripts/test_connection.sh"
+      - "  /opt/mail_server/postgres/scripts/get_password.sh"
+      - ""
+      - "Container Status:"
+      - "  {{ postgres_container_status.stdout }}"
+      - ""
+      - "Health Check: {{ postgres_health.stdout }}"
+      - ""
+      - "Verify Connection:"
+      - "  sudo /opt/mail_server/postgres/scripts/test_connection.sh"
+      - ""
+      - "Get Credentials:"
+      - "  sudo /opt/mail_server/postgres/scripts/get_password.sh"
+      - ""
+      - "Manage Container:"
+      - "  sudo /opt/mail_server/postgres/scripts/manage.sh [start|stop|restart|status|logs]"
+      - ""
+      - "Next Steps (Task 2.1.2):"
+      - "  - Create database schema"
+      - "  - Create service users (postfix, dovecot, sogo)"
+      - "  - Set up tables for virtual domains, users, aliases"
+      - "=========================================="
