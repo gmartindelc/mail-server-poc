@@ -1,0 +1,487 @@
+---
+# Playbook: Prepare Disk Quota System (Documentation Approach)
+# Purpose: Install quota tools and create enablement scripts for future use
+# Task: 1.4.3
+#
+# Approach:
+#   - Install quota management tools
+#   - Create scripts to enable quotas when needed
+#   - Document the process
+#   - Check current filesystem status
+#   - Do NOT modify fstab or enable quotas yet (PoC phase)
+#
+# When to Enable:
+#   - When moving from PoC to production
+#   - When multiple users are active
+#   - When storage management becomes critical
+
+- name: Install quota management tools
+  ansible.builtin.apt:
+    name:
+      - quota
+      - quotatool
+    state: present
+    update_cache: yes
+  register: quota_tools_installed
+
+- name: Create quota scripts directory
+  ansible.builtin.file:
+    path: /opt/mail_server/scripts/quota
+    state: directory
+    mode: '0755'
+    owner: root
+    group: root
+
+- name: Check current filesystem for /var/mail
+  ansible.builtin.shell: df -T /var/mail | tail -1
+  register: var_mail_filesystem
+  changed_when: false
+
+- name: Parse filesystem information
+  ansible.builtin.set_fact:
+    mail_fs_device: "{{ var_mail_filesystem.stdout.split()[0] }}"
+    mail_fs_type: "{{ var_mail_filesystem.stdout.split()[1] }}"
+    mail_fs_mount: "{{ var_mail_filesystem.stdout.split()[6] }}"
+
+- name: Check if quotas are already enabled
+  ansible.builtin.shell: mount | grep "{{ mail_fs_mount }}" | grep -o 'usrquota\|usrjquota'
+  register: quota_check
+  changed_when: false
+  failed_when: false
+
+- name: Create quota enablement script
+  ansible.builtin.copy:
+    content: |
+      #!/bin/bash
+      # Quota Enablement Script
+      # This script enables disk quotas on the mail filesystem
+      # 
+      # WARNING: This will modify /etc/fstab and remount the filesystem
+      # Backup your data before running in production
+      
+      set -e
+      
+      # Colors for output
+      RED='\033[0;31m'
+      GREEN='\033[0;32m'
+      YELLOW='\033[1;33m'
+      NC='\033[0m' # No Color
+      
+      if [ "$EUID" -ne 0 ]; then 
+        echo -e "${RED}This script must be run as root${NC}"
+        exit 1
+      fi
+      
+      echo -e "${YELLOW}=== Mail Server Quota Enablement ===${NC}"
+      echo ""
+      echo "Filesystem: {{ mail_fs_mount }}"
+      echo "Device: {{ mail_fs_device }}"
+      echo "Type: {{ mail_fs_type }}"
+      echo ""
+      
+      # Check if already enabled
+      if mount | grep "{{ mail_fs_mount }}" | grep -q usrquota; then
+        echo -e "${GREEN}✅ Quotas are already enabled${NC}"
+        exit 0
+      fi
+      
+      echo -e "${YELLOW}⚠️  This will:${NC}"
+      echo "  1. Backup /etc/fstab"
+      echo "  2. Add usrquota mount option"
+      echo "  3. Remount {{ mail_fs_mount }}"
+      echo "  4. Initialize quota database"
+      echo "  5. Enable quotas"
+      echo "  6. Set default quota for vmail (900MB soft, 1GB hard)"
+      echo ""
+      
+      read -p "Continue? (yes/no): " -r
+      if [[ ! $REPLY =~ ^[Yy][Ee][Ss]$ ]]; then
+        echo "Aborted."
+        exit 0
+      fi
+      
+      echo ""
+      echo -e "${YELLOW}Step 1: Backing up /etc/fstab...${NC}"
+      cp /etc/fstab "/etc/fstab.backup.$(date +%Y%m%d_%H%M%S)"
+      echo -e "${GREEN}✅ Backup created${NC}"
+      
+      echo ""
+      echo -e "${YELLOW}Step 2: Adding usrquota to /etc/fstab...${NC}"
+      # Find the line for the filesystem and add usrquota
+      sed -i.bak 's/\({{ mail_fs_device }}.*\s\+defaults\)/\1,usrquota/' /etc/fstab
+      echo -e "${GREEN}✅ /etc/fstab updated${NC}"
+      
+      echo ""
+      echo -e "${YELLOW}Step 3: Remounting filesystem...${NC}"
+      mount -o remount {{ mail_fs_mount }}
+      echo -e "${GREEN}✅ Filesystem remounted${NC}"
+      
+      echo ""
+      echo -e "${YELLOW}Step 4: Initializing quota database...${NC}"
+      quotacheck -cum {{ mail_fs_mount }}
+      echo -e "${GREEN}✅ Quota database initialized${NC}"
+      
+      echo ""
+      echo -e "${YELLOW}Step 5: Enabling quotas...${NC}"
+      quotaon {{ mail_fs_mount }}
+      echo -e "${GREEN}✅ Quotas enabled${NC}"
+      
+      echo ""
+      echo -e "${YELLOW}Step 6: Setting default quota for vmail...${NC}"
+      # 900MB soft limit, 1024MB (1GB) hard limit
+      setquota -u vmail $((900 * 1024)) $((1024 * 1024)) 0 0 {{ mail_fs_mount }}
+      echo -e "${GREEN}✅ Default quota set${NC}"
+      
+      echo ""
+      echo -e "${GREEN}=== Quota System Enabled Successfully ===${NC}"
+      echo ""
+      echo "Verify with:"
+      echo "  sudo quotaon -p {{ mail_fs_mount }}"
+      echo "  sudo quota -u vmail"
+      echo "  sudo repquota -u {{ mail_fs_mount }}"
+      echo ""
+      echo "Manage quotas with:"
+      echo "  /opt/mail_server/scripts/quota/set_quota.sh <user> <soft_mb> <hard_mb>"
+      echo "  /opt/mail_server/scripts/quota/check_quotas.sh [user]"
+    dest: /opt/mail_server/scripts/quota/enable_quotas.sh
+    mode: '0755'
+    owner: root
+    group: root
+
+- name: Create quota monitoring script
+  ansible.builtin.copy:
+    content: |
+      #!/bin/bash
+      # Quota Monitoring Script
+      # Usage: ./check_quotas.sh [username]
+      
+      set -e
+      
+      if [ "$EUID" -ne 0 ]; then 
+        echo "This script must be run as root"
+        exit 1
+      fi
+      
+      # Check if quotas are enabled
+      if ! quotaon -p /var/mail &>/dev/null; then
+        echo "❌ Quotas are NOT enabled on /var/mail"
+        echo "To enable quotas, run: /opt/mail_server/scripts/quota/enable_quotas.sh"
+        exit 1
+      fi
+      
+      echo "✅ Quotas are enabled on /var/mail"
+      echo ""
+      
+      if [ -n "$1" ]; then
+        # Show quota for specific user
+        echo "Quota for user: $1"
+        quota -u "$1" -v
+      else
+        # Show all quotas
+        echo "All user quotas:"
+        repquota -u /var/mail
+      fi
+    dest: /opt/mail_server/scripts/quota/check_quotas.sh
+    mode: '0755'
+    owner: root
+    group: root
+
+- name: Create quota management script
+  ansible.builtin.copy:
+    content: |
+      #!/bin/bash
+      # Quota Management Script
+      # Usage: ./set_quota.sh <username> <soft_limit_mb> <hard_limit_mb>
+      # Example: ./set_quota.sh user@example.com 900 1024
+      
+      set -e
+      
+      if [ "$EUID" -ne 0 ]; then 
+        echo "This script must be run as root"
+        exit 1
+      fi
+      
+      if [ $# -ne 3 ]; then
+        echo "Usage: $0 <username> <soft_limit_mb> <hard_limit_mb>"
+        echo "Example: $0 vmail 900 1024"
+        exit 1
+      fi
+      
+      USERNAME=$1
+      SOFT_LIMIT_MB=$2
+      HARD_LIMIT_MB=$3
+      
+      # Convert MB to blocks (1 block = 1KB)
+      SOFT_BLOCKS=$((SOFT_LIMIT_MB * 1024))
+      HARD_BLOCKS=$((HARD_LIMIT_MB * 1024))
+      
+      # Check if quotas are enabled
+      if ! quotaon -p /var/mail &>/dev/null; then
+        echo "❌ Quotas are NOT enabled on /var/mail"
+        echo "To enable quotas, run: /opt/mail_server/scripts/quota/enable_quotas.sh"
+        exit 1
+      fi
+      
+      echo "Setting quota for user: $USERNAME"
+      echo "  Soft limit: ${SOFT_LIMIT_MB} MB"
+      echo "  Hard limit: ${HARD_LIMIT_MB} MB"
+      
+      # Set the quota
+      setquota -u "$USERNAME" "$SOFT_BLOCKS" "$HARD_BLOCKS" 0 0 /var/mail
+      
+      echo "✅ Quota set successfully"
+      echo ""
+      echo "Verify with: quota -u $USERNAME"
+    dest: /opt/mail_server/scripts/quota/set_quota.sh
+    mode: '0755'
+    owner: root
+    group: root
+
+- name: Create quota documentation
+  ansible.builtin.copy:
+    content: |
+      # Disk Quota System - Documentation
+      
+      ## Current Status
+      
+      **PoC Phase:** Quota tools installed but NOT enabled
+      **Filesystem:** {{ mail_fs_mount }} ({{ mail_fs_type }})
+      **Device:** {{ mail_fs_device }}
+      **Quota Status:** {{ 'ENABLED ✅' if quota_check.rc == 0 else 'DISABLED (ready to enable)' }}
+      
+      ## Why Quotas Are Not Enabled Yet
+      
+      During the PoC (Proof of Concept) phase:
+      - Single-user testing environment
+      - No risk of storage abuse
+      - Filesystem modification not needed yet
+      - Can be enabled quickly when needed
+      
+      ## When to Enable Quotas
+      
+      Enable quotas when:
+      - Moving from PoC to production
+      - Adding multiple users to the system
+      - Storage management becomes critical
+      - Per-user accountability required
+      
+      ## How to Enable Quotas
+      
+      ### Automated Script (Recommended)
+      
+      ```bash
+      # Run the enablement script
+      sudo /opt/mail_server/scripts/quota/enable_quotas.sh
+      
+      # The script will:
+      # 1. Backup /etc/fstab
+      # 2. Add usrquota mount option
+      # 3. Remount filesystem
+      # 4. Initialize quota database
+      # 5. Enable quotas
+      # 6. Set default limits for vmail user
+      ```
+      
+      ### Manual Process
+      
+      If you prefer manual control:
+      
+      1. **Backup fstab:**
+         ```bash
+         sudo cp /etc/fstab /etc/fstab.backup.$(date +%Y%m%d)
+         ```
+      
+      2. **Edit /etc/fstab:**
+         ```bash
+         sudo nano /etc/fstab
+         # Add 'usrquota' to mount options for {{ mail_fs_mount }}
+         # Example:
+         # {{ mail_fs_device }} {{ mail_fs_mount }} {{ mail_fs_type }} defaults,usrquota 0 2
+         ```
+      
+      3. **Remount filesystem:**
+         ```bash
+         sudo mount -o remount {{ mail_fs_mount }}
+         ```
+      
+      4. **Initialize quota database:**
+         ```bash
+         sudo quotacheck -cum {{ mail_fs_mount }}
+         ```
+      
+      5. **Enable quotas:**
+         ```bash
+         sudo quotaon {{ mail_fs_mount }}
+         ```
+      
+      6. **Set default quota for vmail:**
+         ```bash
+         sudo /opt/mail_server/scripts/quota/set_quota.sh vmail 900 1024
+         ```
+      
+      ## Quota Management
+      
+      ### Check Quota Status
+      
+      ```bash
+      # Check if quotas are enabled
+      sudo quotaon -p /var/mail
+      
+      # View all quotas
+      sudo /opt/mail_server/scripts/quota/check_quotas.sh
+      
+      # View specific user quota
+      sudo /opt/mail_server/scripts/quota/check_quotas.sh vmail
+      ```
+      
+      ### Set User Quotas
+      
+      ```bash
+      # Set quota for a user (soft: 900MB, hard: 1GB)
+      sudo /opt/mail_server/scripts/quota/set_quota.sh username 900 1024
+      
+      # Set quota for vmail user
+      sudo /opt/mail_server/scripts/quota/set_quota.sh vmail 900 1024
+      ```
+      
+      ### Monitor Quotas
+      
+      ```bash
+      # Generate quota report
+      sudo repquota -u /var/mail
+      
+      # Check specific user
+      sudo quota -u vmail
+      
+      # Find users over quota
+      sudo repquota -u /var/mail | grep +
+      ```
+      
+      ## Typical Quota Configuration
+      
+      For mail server with 80GB storage and ~100 users:
+      
+      ```
+      Per user:
+      - Soft limit: 900 MB (warning threshold)
+      - Hard limit: 1024 MB (1 GB absolute maximum)
+      - Grace period: 7 days to reduce usage below soft limit
+      
+      Total capacity: ~100 GB theoretical (100 users × 1GB)
+      Actual storage: 80 GB available
+      Overhead: ~20% (expected)
+      Safe capacity: ~80 users at full quota
+      ```
+      
+      ## Troubleshooting
+      
+      ### Quotas not working after enabling
+      
+      ```bash
+      # Rebuild quota database
+      sudo quotaoff {{ mail_fs_mount }}
+      sudo quotacheck -cum {{ mail_fs_mount }}
+      sudo quotaon {{ mail_fs_mount }}
+      ```
+      
+      ### Check filesystem type compatibility
+      
+      ```bash
+      # ext4: Use usrquota mount option (traditional)
+      # xfs: Built-in quota support (different commands)
+      
+      df -T /var/mail
+      ```
+      
+      ### Verify quota files exist
+      
+      ```bash
+      ls -la {{ mail_fs_mount }}/aquota.*
+      # Should show: aquota.user, aquota.group
+      ```
+      
+      ## Scripts Installed
+      
+      All scripts located in: `/opt/mail_server/scripts/quota/`
+      
+      - `enable_quotas.sh` - Enable quota system (one-time setup)
+      - `check_quotas.sh` - Check quota status and usage
+      - `set_quota.sh` - Set quota limits for a user
+      
+      ## Integration with Mail Services
+      
+      Once quotas are enabled:
+      
+      1. **Dovecot** will enforce quotas automatically
+      2. **Postfix** will reject mail when user over quota
+      3. **Users** receive warning when approaching soft limit
+      4. **Monitoring** can alert on quota usage
+      
+      ## References
+      
+      - Planning document: Section 5.1 (Filesystem Layout)
+      - Task 1.4.3 specification in tasks.md
+      - Linux quota documentation: `man quota`, `man quotactl`
+      
+      ---
+      
+      **Last Updated:** {{ ansible_date_time.date }}
+      **Status:** Tools installed, quotas ready to enable
+      **Next Step:** Enable quotas when transitioning to production
+    dest: /opt/mail_server/scripts/quota/README.md
+    mode: '0644'
+    owner: root
+    group: root
+
+- name: Display task completion summary
+  ansible.builtin.debug:
+    msg:
+      - "=========================================="
+      - "Task 1.4.3 - Quota System Prepared"
+      - "=========================================="
+      - ""
+      - "Status: ✅ Tools installed and scripts created"
+      - "Approach: Documentation-based (PoC phase)"
+      - ""
+      - "Quota Tools Installed:"
+      - "  ✓ quota - Quota management utilities"
+      - "  ✓ quotatool - Quota manipulation tool"
+      - ""
+      - "Current Filesystem Status:"
+      - "  Device: {{ mail_fs_device }}"
+      - "  Type: {{ mail_fs_type }}"
+      - "  Mount: {{ mail_fs_mount }}"
+      - "  Quota Status: {{ 'ENABLED ✅' if quota_check.rc == 0 else 'Not enabled (ready for activation)' }}"
+      - ""
+      - "Scripts Created in /opt/mail_server/scripts/quota/:"
+      - "  ✓ enable_quotas.sh - One-time quota enablement"
+      - "  ✓ check_quotas.sh - Check quota status and usage"
+      - "  ✓ set_quota.sh - Set user quota limits"
+      - "  ✓ README.md - Complete documentation"
+      - ""
+      - "Why Quotas Are Not Enabled Yet:"
+      - "  - This is PoC phase (single user testing)"
+      - "  - No storage abuse risk currently"
+      - "  - Can be enabled quickly when needed"
+      - "  - Avoids filesystem modification during testing"
+      - ""
+      - "When to Enable Quotas:"
+      - "  - Transitioning from PoC to production"
+      - "  - Adding multiple users to system"
+      - "  - Storage management becomes critical"
+      - "  - Per-user accountability required"
+      - ""
+      - "How to Enable (When Ready):"
+      - "  sudo /opt/mail_server/scripts/quota/enable_quotas.sh"
+      - ""
+      - "Documentation:"
+      - "  /opt/mail_server/scripts/quota/README.md"
+      - ""
+      - "Task Group 1.4 Status:"
+      - "  ✅ Task 1.4.1 - Directory structure created"
+      - "  ✅ Task 1.4.2 - Permissions and ownership configured"
+      - "  ✅ Task 1.4.3 - Quota system prepared"
+      - ""
+      - "Milestone 1 Complete! 🎉"
+      - "Ready for Milestone 2: Database Layer Implementation"
+      - "=========================================="

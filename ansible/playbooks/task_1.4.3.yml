@@ -1,0 +1,16 @@
+---
+# Task 1.4.3: Configure disk quotas for /var/mail/vmail/ (Documentation Approach)
+# Dependencies: Task 1.4.2 (Users and permissions configured)
+# Purpose: Document quota system and provide scripts for future enablement
+# Estimated Duration: 10 minutes
+#
+# Note: This is a simplified approach for PoC phase.
+# Full quota enforcement can be enabled later when needed for production.
+
+- name: Task 1.4.3 - Prepare Disk Quota System
+  hosts: mail_server
+  become: yes
+  
+  tasks:
+    - name: Include quota preparation playbook
+      ansible.builtin.include_tasks: prepare_disk_quotas.yml
