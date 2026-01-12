@@ -1,0 +1,123 @@
+-- Create PostgreSQL Service Users for Mail Server
+-- Each service gets dedicated credentials with minimal permissions
+--
+-- Users:
+--   postfix  - Read-only (mail routing lookups)
+--   dovecot  - Read-only (IMAP/POP3 authentication)
+--   sogo     - Read-write (webmail interface)
+--   mailadmin - Full admin (user management)
+
+-- Create postfix user (read-only for mail routing)
+DO $$
+BEGIN
+    IF NOT EXISTS (SELECT FROM pg_user WHERE usename = 'postfix') THEN
+        CREATE USER postfix WITH PASSWORD '{{ postfix_password }}';
+        RAISE NOTICE 'Created user: postfix';
+    ELSE
+        RAISE NOTICE 'User postfix already exists, updating password';
+        ALTER USER postfix WITH PASSWORD '{{ postfix_password }}';
+    END IF;
+END $$;
+
+-- Create dovecot user (read-only for authentication)
+DO $$
+BEGIN
+    IF NOT EXISTS (SELECT FROM pg_user WHERE usename = 'dovecot') THEN
+        CREATE USER dovecot WITH PASSWORD '{{ dovecot_password }}';
+        RAISE NOTICE 'Created user: dovecot';
+    ELSE
+        RAISE NOTICE 'User dovecot already exists, updating password';
+        ALTER USER dovecot WITH PASSWORD '{{ dovecot_password }}';
+    END IF;
+END $$;
+
+-- Create sogo user (read-write for webmail)
+DO $$
+BEGIN
+    IF NOT EXISTS (SELECT FROM pg_user WHERE usename = 'sogo') THEN
+        CREATE USER sogo WITH PASSWORD '{{ sogo_password }}';
+        RAISE NOTICE 'Created user: sogo';
+    ELSE
+        RAISE NOTICE 'User sogo already exists, updating password';
+        ALTER USER sogo WITH PASSWORD '{{ sogo_password }}';
+    END IF;
+END $$;
+
+-- Create mailadmin user (full admin for management)
+DO $$
+BEGIN
+    IF NOT EXISTS (SELECT FROM pg_user WHERE usename = 'mailadmin') THEN
+        CREATE USER mailadmin WITH PASSWORD '{{ mailadmin_password }}';
+        RAISE NOTICE 'Created user: mailadmin';
+    ELSE
+        RAISE NOTICE 'User mailadmin already exists, updating password';
+        ALTER USER mailadmin WITH PASSWORD '{{ mailadmin_password }}';
+    END IF;
+END $$;
+
+-- Grant permissions to postfix (read-only for mail routing)
+GRANT CONNECT ON DATABASE mailserver TO postfix;
+GRANT USAGE ON SCHEMA public TO postfix;
+GRANT SELECT ON virtual_domains TO postfix;
+GRANT SELECT ON virtual_users TO postfix;
+GRANT SELECT ON virtual_aliases TO postfix;
+GRANT SELECT ON user_mailbox_info TO postfix;
+
+-- Grant permissions to dovecot (read-only for authentication)
+GRANT CONNECT ON DATABASE mailserver TO dovecot;
+GRANT USAGE ON SCHEMA public TO dovecot;
+GRANT SELECT ON virtual_users TO dovecot;
+GRANT SELECT ON virtual_domains TO dovecot;
+GRANT SELECT ON user_mailbox_info TO dovecot;
+GRANT EXECUTE ON FUNCTION verify_password(VARCHAR, VARCHAR) TO dovecot;
+
+-- Grant permissions to sogo (read-write for webmail)
+GRANT CONNECT ON DATABASE mailserver TO sogo;
+GRANT USAGE ON SCHEMA public TO sogo;
+GRANT SELECT, INSERT, UPDATE ON virtual_users TO sogo;
+GRANT SELECT ON virtual_domains TO sogo;
+GRANT SELECT ON virtual_aliases TO sogo;
+GRANT SELECT ON user_mailbox_info TO sogo;
+
+-- Grant permissions to mailadmin (full admin for management)
+GRANT CONNECT ON DATABASE mailserver TO mailadmin;
+GRANT USAGE ON SCHEMA public TO mailadmin;
+GRANT ALL PRIVILEGES ON virtual_domains TO mailadmin;
+GRANT ALL PRIVILEGES ON virtual_users TO mailadmin;
+GRANT ALL PRIVILEGES ON virtual_aliases TO mailadmin;
+GRANT ALL PRIVILEGES ON user_mailbox_info TO mailadmin;
+GRANT EXECUTE ON FUNCTION verify_password(VARCHAR, VARCHAR) TO mailadmin;
+
+-- Set default privileges for future objects
+ALTER DEFAULT PRIVILEGES IN SCHEMA public
+    GRANT SELECT ON TABLES TO postfix;
+
+ALTER DEFAULT PRIVILEGES IN SCHEMA public
+    GRANT SELECT ON TABLES TO dovecot;
+
+ALTER DEFAULT PRIVILEGES IN SCHEMA public
+    GRANT SELECT, INSERT, UPDATE ON TABLES TO sogo;
+
+ALTER DEFAULT PRIVILEGES IN SCHEMA public
+    GRANT ALL PRIVILEGES ON TABLES TO mailadmin;
+
+-- Display summary
+DO $$
+BEGIN
+    RAISE NOTICE '========================================';
+    RAISE NOTICE 'Service Users Created';
+    RAISE NOTICE '========================================';
+    RAISE NOTICE '';
+    RAISE NOTICE 'Users and permissions:';
+    RAISE NOTICE '  postfix  - SELECT on domains, users, aliases (mail routing)';
+    RAISE NOTICE '  dovecot  - SELECT on users (authentication)';
+    RAISE NOTICE '  sogo     - SELECT, INSERT, UPDATE on users (webmail)';
+    RAISE NOTICE '  mailadmin - ALL PRIVILEGES (administration)';
+    RAISE NOTICE '';
+    RAISE NOTICE 'Connection strings stored in:';
+    RAISE NOTICE '  /opt/mail_server/postgres/connection_strings/';
+    RAISE NOTICE '';
+    RAISE NOTICE 'Credentials stored in:';
+    RAISE NOTICE '  /root/postgres_service_users.txt';
+    RAISE NOTICE '========================================';
+END $$;

@@ -1,0 +1,13 @@
+---
+# Task 2.1.2: Configure PostgreSQL for mail server authentication
+# Dependencies: Task 2.1.1 (PostgreSQL container running)
+# Purpose: Create database schema, service users, and initial test data
+# Estimated Duration: 45 minutes
+
+- name: Task 2.1.2 - Configure Mail Database Schema
+  hosts: mail_server
+  become: yes
+  
+  tasks:
+    - name: Include mail database configuration playbook
+      ansible.builtin.include_tasks: configure_mail_database.yml

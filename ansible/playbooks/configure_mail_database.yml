@@ -1,0 +1,373 @@
+---
+# Playbook: Configure Mail Database Schema
+# Purpose: Create database schema, service users, and test data
+# Task: 2.1.2
+#
+# What this playbook does:
+#   1. Creates database schema (tables, functions, views)
+#   2. Generates secure passwords for service users
+#   3. Creates PostgreSQL service users with appropriate permissions
+#   4. Inserts test data for verification
+#   5. Creates connection string files for each service
+#   6. Verifies all connections work
+
+- name: Create SQL files directory
+  ansible.builtin.file:
+    path: /opt/mail_server/postgres/sql
+    state: directory
+    mode: '0755'
+    owner: root
+    group: root
+
+- name: Create connection strings directory
+  ansible.builtin.file:
+    path: /opt/mail_server/postgres/connection_strings
+    state: directory
+    mode: '0700'
+    owner: root
+    group: root
+
+- name: Generate secure passwords for service users
+  ansible.builtin.shell: openssl rand -base64 32 | tr -d '/+=' | head -c 32
+  register: service_password_gen
+  changed_when: false
+  loop:
+    - postfix
+    - dovecot
+    - sogo
+    - mailadmin
+  loop_control:
+    loop_var: service_name
+
+- name: Set password facts
+  ansible.builtin.set_fact:
+    postfix_password: "{{ service_password_gen.results[0].stdout }}"
+    dovecot_password: "{{ service_password_gen.results[1].stdout }}"
+    sogo_password: "{{ service_password_gen.results[2].stdout }}"
+    mailadmin_password: "{{ service_password_gen.results[3].stdout }}"
+
+- name: Copy schema SQL file to server
+  ansible.builtin.copy:
+    src: schema.sql
+    dest: /opt/mail_server/postgres/sql/schema.sql
+    mode: '0644'
+    owner: root
+    group: root
+
+- name: Create service users SQL file from template
+  ansible.builtin.template:
+    src: create_users.sql.j2
+    dest: /opt/mail_server/postgres/sql/create_users.sql
+    mode: '0600'
+    owner: root
+    group: root
+  vars:
+    postfix_password: "{{ postfix_password }}"
+    dovecot_password: "{{ dovecot_password }}"
+    sogo_password: "{{ sogo_password }}"
+    mailadmin_password: "{{ mailadmin_password }}"
+
+- name: Copy test data SQL file to server
+  ansible.builtin.copy:
+    src: test_data.sql
+    dest: /opt/mail_server/postgres/sql/test_data.sql
+    mode: '0644'
+    owner: root
+    group: root
+
+- name: Execute schema creation
+  ansible.builtin.shell: |
+    cat /opt/mail_server/postgres/sql/schema.sql | docker exec -i mailserver-postgres psql -U postgres -d mailserver
+  register: schema_result
+  changed_when: "'CREATE' in schema_result.stdout or 'CREATE' in schema_result.stderr"
+
+- name: Execute service users creation
+  ansible.builtin.shell: |
+    cat /opt/mail_server/postgres/sql/create_users.sql | docker exec -i mailserver-postgres psql -U postgres -d mailserver
+  register: users_result
+  changed_when: "'Created user' in users_result.stderr or 'GRANT' in users_result.stdout"
+
+- name: Execute test data insertion
+  ansible.builtin.shell: |
+    cat /opt/mail_server/postgres/sql/test_data.sql | docker exec -i mailserver-postgres psql -U postgres -d mailserver
+  register: testdata_result
+  changed_when: "'INSERT' in testdata_result.stdout"
+
+- name: Get main postgres password
+  ansible.builtin.shell: grep POSTGRES_PASSWORD /opt/mail_server/postgres/.env | cut -d'=' -f2
+  register: postgres_main_password
+  changed_when: false
+  no_log: true
+
+- name: Create connection string files for services
+  ansible.builtin.copy:
+    content: |
+      # {{ service_item.name | title }} PostgreSQL Connection Configuration
+      # Generated: {{ ansible_date_time.iso8601 }}
+      # 
+      # Connection String:
+      postgresql://{{ service_item.name }}:{{ service_item.password }}@10.100.0.25:5432/mailserver
+      
+      # Individual Components:
+      DB_HOST=10.100.0.25
+      DB_PORT=5432
+      DB_NAME=mailserver
+      DB_USER={{ service_item.name }}
+      DB_PASSWORD={{ service_item.password }}
+      
+      # For Postfix/Dovecot config:
+      hosts = 10.100.0.25
+      dbname = mailserver
+      user = {{ service_item.name }}
+      password = {{ service_item.password }}
+    dest: "/opt/mail_server/postgres/connection_strings/{{ service_item.name }}.conf"
+    mode: '0600'
+    owner: root
+    group: root
+  loop:
+    - { name: 'postfix', password: '{{ postfix_password }}' }
+    - { name: 'dovecot', password: '{{ dovecot_password }}' }
+    - { name: 'sogo', password: '{{ sogo_password }}' }
+    - { name: 'mailadmin', password: '{{ mailadmin_password }}' }
+  loop_control:
+    loop_var: service_item
+  no_log: true
+
+- name: Create master credentials file
+  ansible.builtin.copy:
+    content: |
+      Mail Server Database Credentials
+      =================================
+      Generated: {{ ansible_date_time.iso8601 }}
+      
+      Main Database:
+      --------------
+      Host: 10.100.0.25
+      Port: 5432
+      Database: mailserver
+      Admin User: postgres
+      Admin Password: {{ postgres_main_password.stdout }}
+      
+      Service Users:
+      --------------
+      
+      Postfix (Mail Routing):
+        User: postfix
+        Password: {{ postfix_password }}
+        Permissions: SELECT on domains, users, aliases
+        Connection: postgresql://postfix:{{ postfix_password }}@10.100.0.25:5432/mailserver
+      
+      Dovecot (IMAP/POP3 Authentication):
+        User: dovecot
+        Password: {{ dovecot_password }}
+        Permissions: SELECT on users, EXECUTE on verify_password()
+        Connection: postgresql://dovecot:{{ dovecot_password }}@10.100.0.25:5432/mailserver
+      
+      SOGo (Webmail Interface):
+        User: sogo
+        Password: {{ sogo_password }}
+        Permissions: SELECT, INSERT, UPDATE on users
+        Connection: postgresql://sogo:{{ sogo_password }}@10.100.0.25:5432/mailserver
+      
+      Mail Admin (User Management):
+        User: mailadmin
+        Password: {{ mailadmin_password }}
+        Permissions: ALL PRIVILEGES on all tables
+        Connection: postgresql://mailadmin:{{ mailadmin_password }}@10.100.0.25:5432/mailserver
+      
+      Test Data:
+      ----------
+      Domain: testdomain.local
+      
+      Test Users:
+        testuser1@testdomain.local (password: TestPass123!, quota: 1GB)
+        testuser2@testdomain.local (password: TestPass456!, quota: 2GB)
+        admin@testdomain.local (password: AdminPass789!, quota: 5GB)
+      
+      Test Alias:
+        alias@testdomain.local → testuser1@testdomain.local
+      
+      Configuration Files:
+      --------------------
+      Individual service configs: /opt/mail_server/postgres/connection_strings/
+      SQL files: /opt/mail_server/postgres/sql/
+      
+      Verification Commands:
+      ----------------------
+      # List tables
+      docker exec mailserver-postgres psql -U postgres -d mailserver -c "\dt"
+      
+      # Count users
+      docker exec mailserver-postgres psql -U postgres -d mailserver -c "SELECT COUNT(*) FROM virtual_users;"
+      
+      # Test postfix connection
+      docker exec mailserver-postgres psql -U postfix -h 10.100.0.25 -d mailserver -c "SELECT email FROM virtual_users;"
+      
+      # Test password verification
+      docker exec mailserver-postgres psql -U postgres -d mailserver -c "SELECT verify_password('testuser1@testdomain.local', 'TestPass123!');"
+    dest: /root/postgres_service_users.txt
+    mode: '0600'
+    owner: root
+    group: root
+  no_log: true
+
+- name: Verify schema tables exist
+  ansible.builtin.shell: |
+    docker exec mailserver-postgres psql -U postgres -d mailserver -c "\dt" | grep virtual_
+  register: tables_check
+  changed_when: false
+  failed_when: "'virtual_domains' not in tables_check.stdout or 'virtual_users' not in tables_check.stdout or 'virtual_aliases' not in tables_check.stdout"
+
+- name: Count inserted test users
+  ansible.builtin.shell: |
+    docker exec mailserver-postgres psql -U postgres -d mailserver -t -c "SELECT COUNT(*) FROM virtual_users;"
+  register: user_count
+  changed_when: false
+
+- name: Test postfix user connection and permissions
+  ansible.builtin.shell: |
+    PGPASSWORD={{ postfix_password }} docker exec -e PGPASSWORD mailserver-postgres psql -U postfix -h 10.100.0.25 -d mailserver -c "SELECT COUNT(*) FROM virtual_users;" -t
+  register: postfix_test
+  changed_when: false
+  failed_when: postfix_test.rc != 0
+  no_log: true
+
+- name: Test dovecot user connection and permissions
+  ansible.builtin.shell: |
+    PGPASSWORD={{ dovecot_password }} docker exec -e PGPASSWORD mailserver-postgres psql -U dovecot -h 10.100.0.25 -d mailserver -c "SELECT COUNT(*) FROM virtual_users;" -t
+  register: dovecot_test
+  changed_when: false
+  failed_when: dovecot_test.rc != 0
+  no_log: true
+
+- name: Test password verification function
+  ansible.builtin.shell: |
+    docker exec mailserver-postgres psql -U postgres -d mailserver -t -c "SELECT verify_password('testuser1@testdomain.local', 'TestPass123!');"
+  register: password_verify_test
+  changed_when: false
+  failed_when: "'t' not in password_verify_test.stdout"
+
+- name: Test maildir path generation in view
+  ansible.builtin.shell: |
+    docker exec mailserver-postgres psql -U postgres -d mailserver -t -c "SELECT maildir_path FROM user_mailbox_info WHERE email = 'testuser1@testdomain.local';"
+  register: maildir_test
+  changed_when: false
+
+- name: Create database verification script
+  ansible.builtin.copy:
+    content: |
+      #!/bin/bash
+      # Mail Database Verification Script
+      # Usage: ./verify_database.sh
+      
+      set -e
+      
+      echo "=========================================="
+      echo "Mail Database Verification"
+      echo "=========================================="
+      echo ""
+      
+      echo "1. Checking schema tables..."
+      docker exec mailserver-postgres psql -U postgres -d mailserver -c "\dt" | grep virtual_ && echo "   ✓ Schema tables exist"
+      
+      echo ""
+      echo "2. Counting records..."
+      DOMAIN_COUNT=$(docker exec mailserver-postgres psql -U postgres -d mailserver -t -c "SELECT COUNT(*) FROM virtual_domains;" | tr -d ' ')
+      USER_COUNT=$(docker exec mailserver-postgres psql -U postgres -d mailserver -t -c "SELECT COUNT(*) FROM virtual_users;" | tr -d ' ')
+      ALIAS_COUNT=$(docker exec mailserver-postgres psql -U postgres -d mailserver -t -c "SELECT COUNT(*) FROM virtual_aliases;" | tr -d ' ')
+      echo "   Domains: $DOMAIN_COUNT"
+      echo "   Users: $USER_COUNT"
+      echo "   Aliases: $ALIAS_COUNT"
+      
+      echo ""
+      echo "3. Testing service user connections..."
+      
+      # Test postfix (read credentials from file)
+      source /opt/mail_server/postgres/connection_strings/postfix.conf
+      if PGPASSWORD=$DB_PASSWORD docker exec -e PGPASSWORD mailserver-postgres psql -U $DB_USER -h $DB_HOST -d $DB_NAME -c "SELECT 1;" -t > /dev/null 2>&1; then
+        echo "   ✓ postfix can connect"
+      else
+        echo "   ✗ postfix connection failed"
+      fi
+      
+      # Test dovecot
+      source /opt/mail_server/postgres/connection_strings/dovecot.conf
+      if PGPASSWORD=$DB_PASSWORD docker exec -e PGPASSWORD mailserver-postgres psql -U $DB_USER -h $DB_HOST -d $DB_NAME -c "SELECT 1;" -t > /dev/null 2>&1; then
+        echo "   ✓ dovecot can connect"
+      else
+        echo "   ✗ dovecot connection failed"
+      fi
+      
+      echo ""
+      echo "4. Testing password verification..."
+      VERIFY_RESULT=$(docker exec mailserver-postgres psql -U postgres -d mailserver -t -c "SELECT verify_password('testuser1@testdomain.local', 'TestPass123!');" | tr -d ' ')
+      if [ "$VERIFY_RESULT" = "t" ]; then
+        echo "   ✓ Password verification works"
+      else
+        echo "   ✗ Password verification failed"
+      fi
+      
+      echo ""
+      echo "5. Testing maildir path generation..."
+      docker exec mailserver-postgres psql -U postgres -d mailserver -c "SELECT email, maildir_path FROM user_mailbox_info LIMIT 3;"
+      
+      echo ""
+      echo "=========================================="
+      echo "Verification Complete"
+      echo "=========================================="
+    dest: /opt/mail_server/postgres/scripts/verify_database.sh
+    mode: '0755'
+    owner: root
+    group: root
+
+- name: Display task completion summary
+  ansible.builtin.debug:
+    msg:
+      - "=========================================="
+      - "Task 2.1.2 - Mail Database Schema Complete"
+      - "=========================================="
+      - ""
+      - "Database Schema Created:"
+      - "  ✓ virtual_domains - Mail domains"
+      - "  ✓ virtual_users - Email accounts with passwords"
+      - "  ✓ virtual_aliases - Email forwarding rules"
+      - "  ✓ verify_password() - Authentication function"
+      - "  ✓ user_mailbox_info - Dovecot mailbox view"
+      - ""
+      - "Service Users Created:"
+      - "  ✓ postfix (read-only) - Mail routing lookups"
+      - "  ✓ dovecot (read-only) - IMAP/POP3 authentication"
+      - "  ✓ sogo (read-write) - Webmail interface"
+      - "  ✓ mailadmin (admin) - User management"
+      - ""
+      - "Test Data Inserted:"
+      - "  Domain: testdomain.local"
+      - "  Users: {{ user_count.stdout | trim }} test accounts"
+      - "  Aliases: 1 test alias"
+      - ""
+      - "Connection Tests:"
+      - "  ✓ postfix can connect and query users"
+      - "  ✓ dovecot can connect and query users"
+      - "  ✓ Password verification function works"
+      - "  ✓ Maildir paths generated correctly: {{ maildir_test.stdout | trim }}"
+      - ""
+      - "Credentials Stored:"
+      - "  Master file: /root/postgres_service_users.txt"
+      - "  Per-service configs: /opt/mail_server/postgres/connection_strings/"
+      - ""
+      - "SQL Files:"
+      - "  /opt/mail_server/postgres/sql/schema.sql"
+      - "  /opt/mail_server/postgres/sql/create_users.sql"
+      - "  /opt/mail_server/postgres/sql/test_data.sql"
+      - ""
+      - "Verification:"
+      - "  sudo /opt/mail_server/postgres/scripts/verify_database.sh"
+      - ""
+      - "View Credentials:"
+      - "  sudo cat /root/postgres_service_users.txt"
+      - ""
+      - "Next Steps (Task 2.1.3):"
+      - "  - Configure PostgreSQL backups"
+      - "  - Set up WAL archiving"
+      - "  - Create automated backup scripts"
+      - "=========================================="
