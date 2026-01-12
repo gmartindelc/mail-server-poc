@@ -1,14 +1,14 @@
 # Mail Server Cluster PoC - Task Tracking
 
 **Last Updated:** 2026-01-12  
-**Current Phase:** Milestone 2 - Database Layer Implementation (Task 2.1.1 Complete)  
-**Status:** ✅ Milestone 1 Complete (100%) + Task 2.1.1 Complete
+**Current Phase:** Milestone 2 - Database Layer Implementation (Task 2.1.3 Complete)  
+**Status:** ✅ Milestone 1 Complete (100%) + Milestone 2: 75% Complete (3 of 4 tasks)
 
 ## Recent Session Summary (2026-01-12)
 
-**Completed:** Task Group 1.4 (All 3 tasks) + Task 2.1.1 (PostgreSQL Container)  
-**Duration:** ~6 hours  
-**Status:** Milestone 1 Complete, First production service deployed (PostgreSQL)
+**Completed:** Task Group 1.4 (All 3 tasks) + Task Group 2.1 (Tasks 2.1.1, 2.1.2, 2.1.3)  
+**Duration:** ~8 hours  
+**Status:** Milestone 1 Complete (100%), Milestone 2: Database Layer 75% Complete
 
 **Key Achievements:**
 
@@ -16,13 +16,18 @@
 - Task 1.4.2: Users and permissions configured (vmail UID 5000, postgres UID 999)
 - Task 1.4.3: Quota tools prepared with documentation approach (PoC phase)
 - Task 2.1.1: PostgreSQL 17 container deployed (VPN-only, secure, healthy)
+- Task 2.1.2: Database schema created (virtual_domains, virtual_users, virtual_aliases, service users)
+- Task 2.1.3: Automated backups configured (daily backups, WAL archiving, 7-day retention)
 
 **Infrastructure:**
-- 15 files delivered this session (playbooks, scripts, documentation)
-- PostgreSQL container running and healthy
+- 20+ files delivered this session (playbooks, SQL, scripts, documentation)
+- PostgreSQL 17 container running and healthy
+- Database schema complete with test data
+- Service users created: postfix, dovecot, sogo, mailadmin
+- Automated backups running (daily at 2 AM)
+- WAL archiving active for point-in-time recovery
 - Database accessible via VPN only (10.100.0.25:5432)
-- Management scripts created for operations
-- Secure credential generation and storage
+- Management and backup scripts created
 
 **CRITICAL - Database Access:**
 ```bash
@@ -32,11 +37,18 @@ sudo /opt/mail_server/postgres/scripts/get_password.sh
 # Test connection
 sudo /opt/mail_server/postgres/scripts/test_connection.sh
 
+# Verify database
+sudo /opt/mail_server/postgres/scripts/verify_database.sh
+
 # Manage container
 sudo /opt/mail_server/postgres/scripts/manage.sh [start|stop|restart|status|logs]
+
+# Backup operations
+sudo /opt/mail_server/postgres/scripts/backup_database.sh
+sudo /opt/mail_server/postgres/scripts/verify_backups.sh
 ```
 
-**Next Action:** Task 2.1.2 - Configure PostgreSQL database schema
+**Next Action:** Task 2.1.4 - Final PostgreSQL verification and documentation
 
 ---
 
@@ -356,38 +368,60 @@ sudo /opt/mail_server/postgres/scripts/manage.sh [start|stop|restart|status|logs
     - UFW: Allow only from 10.100.0.0/24
     - Non-root container execution
 
-- [ ] **Task 2.1.2:** Configure PostgreSQL for mail server authentication
+- [x] **Task 2.1.2:** Configure PostgreSQL for mail server authentication
 
   - _Estimate:_ 45 minutes
   - _Dependencies:_ 2.1.1
-  - _What will be done:_
-    - Create mail authentication database schema
-    - Create tables:
-      - `virtual_domains` - Mail domains
-      - `virtual_users` - User accounts
-      - `virtual_aliases` - Email aliases
-    - Set up PostgreSQL users:
-      - `postfix` - Read-only for Postfix lookups
-      - `dovecot` - Read-only for Dovecot authentication
-      - `sogo` - Read/write for SOGo webmail
-      - `mailadmin` - Admin user for management
-    - Configure password hashing (SHA512-CRYPT)
-    - Set up connection limits and permissions
-  - _Assigned to:_
-  - _Completed on:_
+  - _Automation:_ Ansible playbook `task_2.1.2.yml` → `configure_mail_database.yml`
+  - _Assigned to:_ GMCE
+  - _Completed on:_ 2026-01-12
+  - _What was done:_
+    - Created complete database schema (virtual_domains, virtual_users, virtual_aliases)
+    - Created verify_password() function for authentication
+    - Created user_mailbox_info view for Dovecot integration
+    - Created service users with minimal permissions:
+      - `postfix` (read-only) - Mail routing lookups
+      - `dovecot` (read-only) - IMAP/POP3 authentication
+      - `sogo` (read-write) - Webmail password changes
+      - `mailadmin` (admin) - Full user management
+    - Configured password hashing (SHA512-CRYPT, Dovecot/Postfix compatible)
+    - Inserted test data (testdomain.local with 3 users)
+    - Created verification script and documentation
+  - _Files created:_
+    - `task_2.1.2.yml`, `configure_mail_database.yml`
+    - `schema.sql`, `test_data.sql`, `templates/create_users.sql.j2`
+    - `/opt/mail_server/postgres/connection_strings/` - Per-service configs
+    - `/root/postgres_service_users.txt` - Service credentials
+    - `/opt/mail_server/postgres/scripts/verify_database.sh`
 
-- [ ] **Task 2.1.3:** Configure PostgreSQL backups and WAL archiving
+- [x] **Task 2.1.3:** Configure PostgreSQL backups and WAL archiving
 
   - _Estimate:_ 45 minutes
   - _Dependencies:_ 2.1.2
-  - _What will be done:_
-    - Configure WAL archiving to `/opt/postgres/wal_archive/`
-    - Create backup script for daily dumps
-    - Configure point-in-time recovery capability
-    - Set up backup retention policy (7 days)
-    - Test backup and restore procedures
-  - _Assigned to:_
-  - _Completed on:_
+  - _Automation:_ Ansible playbook `task_2.1.3.yml` → `configure_database_backups.yml`
+  - _Assigned to:_ GMCE
+  - _Completed on:_ 2026-01-12
+  - _What was done:_
+    - Enabled WAL archiving to `/opt/postgres/wal_archive/`
+    - Created backup scripts: backup, restore, cleanup, verify
+    - Set up automated cron jobs (daily backup at 2 AM, cleanup at 3 AM)
+    - Created initial backup and verified integrity
+    - Configured 7-day retention for backups and WAL files
+    - Updated PostgreSQL configuration for WAL archiving
+    - Created comprehensive backup documentation
+  - _Files created:_
+    - `task_2.1.3.yml`, `configure_database_backups.yml`
+    - `/opt/mail_server/postgres/scripts/backup_database.sh`
+    - `/opt/mail_server/postgres/scripts/restore_database.sh`
+    - `/opt/mail_server/postgres/scripts/cleanup_old_backups.sh`
+    - `/opt/mail_server/postgres/scripts/verify_backups.sh`
+    - `/opt/mail_server/postgres/README_BACKUPS.md`
+    - Cron jobs for automated backups and cleanup
+  - _Backup strategy:_
+    - Full backups: Daily compressed pg_dump (custom format)
+    - WAL archiving: Continuous for point-in-time recovery (PITR)
+    - Retention: 7 days for both backups and WAL files
+    - Location: `/opt/postgres/backups/` and `/opt/postgres/wal_archive/`
 
 - [ ] **Task 2.1.4:** Verify PostgreSQL container and connectivity
   - _Estimate:_ 20 minutes
@@ -406,12 +440,13 @@ sudo /opt/mail_server/postgres/scripts/manage.sh [start|stop|restart|status|logs
 ## **Progress Summary**
 
 **Milestone 1:** ✅ 100% Complete (All Task Groups 1.1-1.4)  
-**Milestone 2:** 🚧 25% In Progress (Task 2.1.1 Complete, 3 remaining)
+**Milestone 2:** 🚧 75% In Progress (Tasks 2.1.1, 2.1.2, 2.1.3 Complete - Task 2.1.4 remaining)
 
-**Total Tasks Completed:** 23 of 27 planned tasks  
-**Overall Progress:** [▓▓▓▓▓▓▓▓░░] 85%
+**Total Tasks Completed:** 25 of 27 planned tasks  
+**Overall Progress:** [▓▓▓▓▓▓▓▓▓░] 93%
 
 **Production Services Running:**
+- PostgreSQL 17 database (mailserver-postgres, VPN-only, with schema and automated backups)
 - PostgreSQL 17 database (mailserver-postgres, VPN-only, healthy)
 
 **Next Immediate Task:** 2.1.2 - Configure PostgreSQL database schema

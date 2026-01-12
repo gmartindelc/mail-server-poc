@@ -3,9 +3,9 @@
 
 ## Session Summary - 2026-01-12
 
-**Duration:** ~6 hours  
-**Focus:** Task Group 1.4 (Complete) + Task 2.1.1 (Database Container)  
-**Status:** ✅ Milestone 1 Complete (100%) + First production service deployed
+**Duration:** ~8 hours  
+**Focus:** Task Group 1.4 (Complete) + Task Group 2.1 (75% Complete - Tasks 2.1.1, 2.1.2, 2.1.3)  
+**Status:** ✅ Milestone 1 Complete (100%) + Milestone 2 Database Layer (75% Complete)
 
 ### Tasks Completed
 
@@ -113,18 +113,95 @@
   - Non-root container execution
   - Secure credential storage (0600 permissions)
 
+#### Task 2.1.2 - Configure PostgreSQL for Mail Server Authentication
+- **Status:** ✅ Complete
+- **What was done:**
+  - Created complete database schema for mail server operations
+  - Created tables: virtual_domains, virtual_users, virtual_aliases
+  - Created verify_password() function for authentication
+  - Created user_mailbox_info view for Dovecot integration
+  - Created service users with minimal permissions: postfix (read-only), dovecot (read-only), sogo (read-write), mailadmin (admin)
+  - Generated secure passwords for all service users
+  - Inserted test data for verification (testdomain.local with 3 users)
+- **Files created:**
+  - `task_2.1.2.yml` - Task wrapper
+  - `configure_mail_database.yml` - Database configuration playbook
+  - `schema.sql` - Complete database schema
+  - `test_data.sql` - Test domain and users
+  - `templates/create_users.sql.j2` - Service users template
+  - On server:
+    - `/opt/mail_server/postgres/sql/` - SQL files
+    - `/opt/mail_server/postgres/connection_strings/` - Per-service connection configs
+    - `/root/postgres_service_users.txt` - Service user credentials
+    - `/opt/mail_server/postgres/scripts/verify_database.sh` - Database verification
+- **Issues resolved:**
+  - File execution permissions: Used stdin piping (`cat file | docker exec -i`) instead of copying files into container
+  - Template vs copy: Used copy module with inline content for SQL generation
+  - Permission denied: Avoided container filesystem entirely by streaming SQL via stdin
+- **Schema details:**
+  - Password hashing: SHA512-CRYPT (Dovecot/Postfix compatible)
+  - Indexes: Created on email, domain_id, enabled columns for performance
+  - Constraints: Email validation, quota checks, unique constraints
+  - Triggers: Auto-update updated_at timestamp
+- **Service user permissions:**
+  - postfix: SELECT on domains, users, aliases (mail routing)
+  - dovecot: SELECT on users, EXECUTE verify_password() (authentication)
+  - sogo: SELECT, INSERT, UPDATE on users (webmail password changes)
+  - mailadmin: ALL PRIVILEGES (user management)
+
+#### Task 2.1.3 - Configure PostgreSQL Backups and WAL Archiving
+- **Status:** ✅ Complete
+- **What was done:**
+  - Enabled WAL archiving for point-in-time recovery (PITR)
+  - Created backup scripts: backup, restore, cleanup, verify
+  - Set up automated cron jobs (daily backup at 2 AM, cleanup at 3 AM)
+  - Created initial backup and verified integrity
+  - Configured 7-day retention for both backups and WAL files
+  - Updated PostgreSQL configuration for WAL archiving
+  - Created comprehensive backup documentation
+- **Files created:**
+  - `task_2.1.3.yml` - Task wrapper
+  - `configure_database_backups.yml` - Backup configuration playbook
+  - On server:
+    - `/opt/mail_server/postgres/scripts/backup_database.sh` - Full backup script
+    - `/opt/mail_server/postgres/scripts/restore_database.sh` - Restore script
+    - `/opt/mail_server/postgres/scripts/cleanup_old_backups.sh` - Retention management
+    - `/opt/mail_server/postgres/scripts/verify_backups.sh` - Backup integrity testing
+    - `/opt/mail_server/postgres/README_BACKUPS.md` - Complete backup documentation
+    - Cron jobs for automated backups and cleanup
+- **Issues resolved:**
+  - Backup file path: Used stdout streaming (`pg_dump > file`) instead of trying to write inside container
+  - Simplified approach avoids all container filesystem permission issues
+  - Direct streaming from pg_dump to host filesystem
+- **Backup strategy:**
+  - Full backups: Daily compressed pg_dump (custom format)
+  - WAL archiving: Continuous for point-in-time recovery
+  - Retention: 7 days for both backups and WAL files
+  - Location: `/opt/postgres/backups/` and `/opt/postgres/wal_archive/`
+  - Naming: `mailserver_YYYYMMDD_HHMMSS.dump`
+- **PostgreSQL configuration:**
+  - archive_mode: on
+  - archive_command: Copy WAL files to wal_archive directory
+  - archive_timeout: 300 seconds (5 minutes)
+  - max_wal_size: 2GB
+  - Reload configuration: Performed without container restart
+
 ### Infrastructure Updates
 
 #### Project Structure
 - **Task Group 1.4** complete: All directory structure and storage preparation done
 - **Milestone 1** complete: 100% (Task Groups 1.1, 1.2, 1.3, 1.4)
-- **Milestone 2** started: First production service deployed (PostgreSQL)
+- **Milestone 2** progress: 75% (Task Group 2.1: 3 of 4 tasks complete)
+- **Production services:** PostgreSQL 17 database (running, healthy, backed up)
 
 #### Documentation
 - **README_TASK_1.4.1.md** - Complete task documentation for directory creation
 - **README_TASK_1.4.2.md** - Complete task documentation for permissions
 - **README_TASK_1.4.3.md** - Complete task documentation for quota preparation
 - **README_TASK_2.1.1.md** - Complete task documentation for PostgreSQL deployment
+- **README_TASK_2.1.2.md** - Complete task documentation for database schema (if created)
+- **README_TASK_2.1.3.md** - Complete task documentation for backups (if created)
+- **README_ansible_updated.md** - Updated main README with Task Group 2.1 progress
 - **DIRECTORY_STRUCTURE.md** - Visual directory diagrams and structure
 - **README_SECTION_TASK_GROUP_1.4.md** - Section to add to main ansible README
 - Multiple delivery summaries and quick reference guides
@@ -133,6 +210,8 @@
 - **run_all_tasks_1.4.sh** - Sequential execution of all Task 1.4 tasks
 - Quota management scripts on server (enable, check, set)
 - PostgreSQL management scripts on server (manage, test, get password)
+- Database verification script (verify_database.sh)
+- Backup scripts (backup, restore, cleanup, verify)
 
 ### Issues Resolved
 
@@ -153,6 +232,16 @@
    - Removed obsolete docker-compose version line
    - Fixed password passing for connection tests
    - Added jq installation for JSON parsing
+
+5. **Task 2.1.2 - SQL Execution**
+   - Stdin piping: Used `cat file | docker exec -i` instead of copying files
+   - Avoids all container filesystem permission issues
+   - Cleaner and more reliable approach
+
+6. **Task 2.1.3 - Backup Script**
+   - Stdout streaming: Used `pg_dump > file` for direct host filesystem writing
+   - Avoids container filesystem entirely
+   - Standard Docker pattern for database backups
 
 ### Key Patterns Established
 
@@ -181,6 +270,20 @@
    - Can enable with single script when needed
    - Reduces complexity during testing phase
 
+5. **Database Operations Patterns:**
+   - Stdin piping for SQL execution (`cat file | docker exec -i psql`)
+   - Stdout streaming for backups (`docker exec pg_dump > file`)
+   - Avoids all container filesystem permission issues
+   - Standard Docker database patterns
+   - Service user isolation with minimal permissions
+
+6. **Backup Strategy:**
+   - Two-tier approach: Full backups + WAL archiving
+   - Automated scheduling via cron
+   - Retention management (7 days default)
+   - Integrity verification built-in
+   - Point-in-time recovery capability
+
 ### System State After Session
 
 **Server Access:**
@@ -208,7 +311,12 @@ export ANSIBLE_PRIVATE_KEY_FILE=~/SSH_KEYS_CAPITAN_TO_WORKERS/id_ed25519_common
 - UFW (firewall active)
 - fail2ban (monitoring SSH)
 - unattended-upgrades (automatic security updates)
-- **PostgreSQL 17** (mailserver-postgres container, VPN-only on 10.100.0.25:5432) ← NEW
+- **PostgreSQL 17** (mailserver-postgres container, VPN-only on 10.100.0.25:5432)
+  - Database: mailserver
+  - Schema: virtual_domains, virtual_users, virtual_aliases
+  - Service users: postfix, dovecot, sogo, mailadmin
+  - Backups: Automated daily at 2 AM, 7-day retention
+  - WAL archiving: Active for point-in-time recovery
 
 **Directory Structure:**
 ```
@@ -242,36 +350,64 @@ export ANSIBLE_PRIVATE_KEY_FILE=~/SSH_KEYS_CAPITAN_TO_WORKERS/id_ed25519_common
 - Password: Stored in /opt/mail_server/postgres/.env and /root/postgres_credentials.txt
 - Connection: postgresql://postgres:<password>@10.100.0.25:5432/mailserver
 - Access: VPN-only (10.100.0.0/24)
+- Tables: virtual_domains, virtual_users, virtual_aliases
+- Service Users:
+  - postfix (read-only) - Mail routing lookups
+  - dovecot (read-only) - IMAP/POP3 authentication
+  - sogo (read-write) - Webmail password changes
+  - mailadmin (admin) - User management
+- Test Data: testdomain.local with 3 users
+- Backups:
+  - Location: /opt/postgres/backups/
+  - Schedule: Daily at 2 AM
+  - Retention: 7 days
+  - Format: pg_dump custom compressed
+- WAL Archiving:
+  - Location: /opt/postgres/wal_archive/
+  - Active: Yes
+  - PITR: Enabled
 
-### Files Delivered (Total: 15 files this session)
+### Files Delivered (Total: 20+ files this session)
 
 **Playbooks:**
-- task_1.4.1.yml, task_1.4.2.yml, task_1.4.3.yml, task_2.1.1.yml
+- task_1.4.1.yml, task_1.4.2.yml, task_1.4.3.yml (Task Group 1.4)
+- task_2.1.1.yml, task_2.1.2.yml, task_2.1.3.yml (Task Group 2.1)
 - create_mail_directories.yml, configure_directory_permissions.yml
 - prepare_disk_quotas.yml, deploy_postgresql_container.yml
+- configure_mail_database.yml, configure_database_backups.yml
+
+**SQL Files:**
+- schema.sql (database schema)
+- test_data.sql (test domain and users)
+- templates/create_users.sql.j2 (service users)
 
 **Documentation:**
-- README_TASK_1.4.1.md, README_TASK_1.4.2.md, README_TASK_1.4.3.md, README_TASK_2.1.1.md
+- README_TASK_1.4.1.md, README_TASK_1.4.2.md, README_TASK_1.4.3.md
+- README_TASK_2.1.1.md (if created separately)
+- README_ansible_updated.md
 - DIRECTORY_STRUCTURE.md, README_SECTION_TASK_GROUP_1.4.md
 - Multiple delivery summaries and quick reference guides
 
 **Scripts (on server):**
 - /opt/mail_server/scripts/quota/ - Quota management scripts
-- /opt/mail_server/postgres/scripts/ - Database management scripts
+- /opt/mail_server/postgres/scripts/ - Database management scripts (manage, test, get_password, verify_database)
+- /opt/mail_server/postgres/scripts/ - Backup scripts (backup, restore, cleanup, verify)
 - run_all_tasks_1.4.sh - Sequential task execution
 
 ### Next Steps
 
-**Immediate (Task 2.1.2):**
-- Create database schema for mail server
-- Create tables: virtual_domains, virtual_users, virtual_aliases
-- Create PostgreSQL users: postfix, dovecot, sogo, mailadmin
-- Configure permissions and access
+**Immediate (Task 2.1.4):**
+- Final PostgreSQL verification
+- Test all service user connections  
+- Verify backup and restore procedures
+- Document complete connection strings
+- Complete Task Group 2.1
 
 **Upcoming (Milestone 2):**
-- Task 2.1.3: Configure PostgreSQL backups and WAL archiving
-- Task 2.1.4: Verify PostgreSQL container and connectivity
-- Task Group 2.2: Core Mail Services (Postfix, Dovecot)
+- Task Group 2.2: Core Mail Services (Postfix MTA deployment)
+- Postfix container deployment
+- PostgreSQL integration
+- Mail routing configuration
 
 ### Lessons Learned
 
@@ -283,6 +419,10 @@ export ANSIBLE_PRIVATE_KEY_FILE=~/SSH_KEYS_CAPITAN_TO_WORKERS/id_ed25519_common
 6. **Password Management:** Generate strong passwords, store securely (0600), provide retrieval scripts
 7. **Management Scripts Essential:** Operational tasks (start/stop/logs/password) should have dedicated scripts
 8. **Container Health Checks:** Always implement and verify health checks for production services
+9. **Stdin/Stdout Streaming:** Use stdin piping (`cat | docker exec -i`) and stdout streaming (`docker exec > file`) for database operations - avoids all container filesystem permission issues
+10. **Service User Isolation:** Create dedicated database users with minimal permissions for each service (postfix, dovecot, sogo)
+11. **Two-Tier Backup Strategy:** Combine full backups (pg_dump) with WAL archiving for comprehensive protection and PITR capability
+12. **Automate from Day One:** Set up automated backups and cleanup immediately, don't wait until "later"
 
 ### Project Status
 
@@ -290,13 +430,13 @@ export ANSIBLE_PRIVATE_KEY_FILE=~/SSH_KEYS_CAPITAN_TO_WORKERS/id_ed25519_common
 - ✅ Task Group 1.1: VPS Provisioning (Complete)
 - ✅ Task Group 1.2: System User Administration (Complete)
 - ✅ Task Group 1.3: System Hardening (Complete)
-- ✅ Task Group 1.4: Directory Structure & Storage (Complete) ← This session
+- ✅ Task Group 1.4: Directory Structure & Storage (Complete) ← Completed this session
 
-**Milestone 2 Progress:** 🚧 25% Complete (1 of 4 tasks in Task Group 2.1)
-- ✅ Task 2.1.1: PostgreSQL container deployed ← This session
-- ⏳ Task 2.1.2: Database schema creation (Next)
-- ⏳ Task 2.1.3: Backup configuration
-- ⏳ Task 2.1.4: Verification
+**Milestone 2 Progress:** 🚧 75% Complete (Task Group 2.1: 3 of 4 tasks)
+- ✅ Task 2.1.1: PostgreSQL container deployed ← Completed this session
+- ✅ Task 2.1.2: Database schema created ← Completed this session
+- ✅ Task 2.1.3: Backups configured ← Completed this session
+- ⏳ Task 2.1.4: Verification (Next)
 
 **Security Posture:** Production-ready foundation with first live service
 - SSH hardened and VPN-only
@@ -315,7 +455,7 @@ export ANSIBLE_PRIVATE_KEY_FILE=~/SSH_KEYS_CAPITAN_TO_WORKERS/id_ed25519_common
 - Idempotent, reusable playbooks
 
 **Production Services Deployed:** 1
-- PostgreSQL 17 database (VPN-only, containerized, healthy)
+- PostgreSQL 17 database (VPN-only, containerized, healthy, with schema and automated backups)
 
 ---
 
