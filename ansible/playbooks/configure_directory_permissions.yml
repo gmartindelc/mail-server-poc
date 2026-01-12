@@ -1,0 +1,237 @@
+---
+# Playbook: Configure Directory Permissions and Ownership
+# Purpose: Create system users and set proper ownership/permissions
+# Task: 1.4.2
+#
+# Users Created:
+#   vmail (UID 5000)    - Virtual mail storage owner
+#   postgres (UID 999)  - PostgreSQL container user (standard UID)
+#
+# Ownership Configuration:
+#   Mail directories     → vmail:vmail
+#   PostgreSQL directories → postgres:postgres
+#
+# Permissions:
+#   Mail directories: 750 (rwxr-x---)
+#   PostgreSQL data: 700 (rwx------) - container requirement
+#   PostgreSQL WAL/backups: 750 (rwxr-x---)
+#
+# CHECK MODE NOTE:
+#   Check mode has limitations with this task. Users are simulated as created
+#   but don't actually exist, causing ownership changes to fail.
+#   Recommendation: Run without --check flag (task is safe and idempotent)
+
+- name: Display check mode warning
+  ansible.builtin.debug:
+    msg:
+      - "⚠️  CHECK MODE LIMITATION"
+      - "This task simulates user creation but users don't actually exist in check mode."
+      - "Ownership and verification tasks will fail (expected behavior)."
+      - "To see actual results, run without --check flag."
+      - "This task is safe and idempotent - no risk in running directly."
+  when: ansible_check_mode
+
+- name: Create vmail system user (UID 5000)
+  ansible.builtin.user:
+    name: vmail
+    uid: 5000
+    system: yes
+    shell: /usr/sbin/nologin
+    home: /var/mail/vmail
+    create_home: no
+    comment: "Virtual Mail User"
+    state: present
+  register: vmail_user_created
+
+- name: Create postgres system user (UID 999)
+  ansible.builtin.user:
+    name: postgres
+    uid: 999
+    system: yes
+    shell: /usr/sbin/nologin
+    home: /opt/postgres
+    create_home: no
+    comment: "PostgreSQL Database User"
+    state: present
+  register: postgres_user_created
+
+- name: Display user creation status
+  ansible.builtin.debug:
+    msg:
+      - "User Creation Status:"
+      - "  vmail: {{ 'Created' if vmail_user_created.changed else 'Already exists' }}"
+      - "  postgres: {{ 'Created' if postgres_user_created.changed else 'Already exists' }}"
+
+- name: Verify vmail user UID
+  ansible.builtin.command: id -u vmail
+  register: vmail_uid_check
+  changed_when: false
+  failed_when: vmail_uid_check.stdout != '5000'
+
+- name: Verify postgres user UID
+  ansible.builtin.command: id -u postgres
+  register: postgres_uid_check
+  changed_when: false
+  failed_when: postgres_uid_check.stdout != '999'
+
+- name: Set ownership on mail directories
+  ansible.builtin.file:
+    path: "{{ item }}"
+    owner: vmail
+    group: vmail
+    recurse: yes
+    state: directory
+  loop:
+    - /var/mail/vmail
+    - /var/mail/queue
+    - /var/mail/backups
+  register: mail_ownership_set
+
+- name: Set ownership on PostgreSQL directories
+  ansible.builtin.file:
+    path: "{{ item }}"
+    owner: postgres
+    group: postgres
+    recurse: yes
+    state: directory
+  loop:
+    - /opt/postgres/data
+    - /opt/postgres/wal_archive
+    - /opt/postgres/backups
+  register: postgres_ownership_set
+
+- name: Set permissions on mail directories (750)
+  ansible.builtin.file:
+    path: "{{ item }}"
+    mode: '0750'
+    state: directory
+  loop:
+    - /var/mail/vmail
+    - /var/mail/queue
+    - /var/mail/backups
+  register: mail_permissions_set
+
+- name: Set permissions on PostgreSQL data directory (700 - container requirement)
+  ansible.builtin.file:
+    path: /opt/postgres/data
+    mode: '0700'
+    state: directory
+  register: postgres_data_permissions_set
+
+- name: Set permissions on PostgreSQL WAL and backup directories (750)
+  ansible.builtin.file:
+    path: "{{ item }}"
+    mode: '0750'
+    state: directory
+  loop:
+    - /opt/postgres/wal_archive
+    - /opt/postgres/backups
+  register: postgres_other_permissions_set
+
+- name: Verify mail directory ownership and permissions
+  ansible.builtin.stat:
+    path: "{{ item }}"
+  loop:
+    - /var/mail/vmail
+    - /var/mail/queue
+    - /var/mail/backups
+  register: mail_verification
+  check_mode: no
+
+- name: Verify PostgreSQL directory ownership and permissions
+  ansible.builtin.stat:
+    path: "{{ item }}"
+  loop:
+    - /opt/postgres/data
+    - /opt/postgres/wal_archive
+    - /opt/postgres/backups
+  register: postgres_verification
+  check_mode: no
+
+- name: Assert mail directories have correct ownership
+  ansible.builtin.assert:
+    that:
+      - item.stat.pw_name == 'vmail'
+      - item.stat.gr_name == 'vmail'
+    fail_msg: "Directory {{ item.item }} does not have correct ownership (vmail:vmail)"
+    success_msg: "Directory {{ item.item }} ownership verified"
+  loop: "{{ mail_verification.results }}"
+  loop_control:
+    label: "{{ item.item }}"
+  when: not ansible_check_mode
+
+- name: Assert mail directories have correct permissions (750)
+  ansible.builtin.assert:
+    that:
+      - item.stat.mode == '0750'
+    fail_msg: "Directory {{ item.item }} does not have correct permissions (750)"
+    success_msg: "Directory {{ item.item }} permissions verified"
+  loop: "{{ mail_verification.results }}"
+  loop_control:
+    label: "{{ item.item }}"
+  when: not ansible_check_mode
+
+- name: Assert PostgreSQL data directory has correct ownership and permissions
+  ansible.builtin.assert:
+    that:
+      - postgres_verification.results[0].stat.pw_name == 'postgres'
+      - postgres_verification.results[0].stat.gr_name == 'postgres'
+      - postgres_verification.results[0].stat.mode == '0700'
+    fail_msg: "PostgreSQL data directory does not have correct ownership/permissions (postgres:postgres, 700)"
+    success_msg: "PostgreSQL data directory ownership and permissions verified"
+  when: not ansible_check_mode
+
+- name: Assert PostgreSQL WAL/backup directories have correct ownership and permissions
+  ansible.builtin.assert:
+    that:
+      - item.stat.pw_name == 'postgres'
+      - item.stat.gr_name == 'postgres'
+      - item.stat.mode == '0750'
+    fail_msg: "Directory {{ item.item }} does not have correct ownership/permissions"
+    success_msg: "Directory {{ item.item }} ownership and permissions verified"
+  loop: "{{ postgres_verification.results[1:] }}"
+  loop_control:
+    label: "{{ item.item }}"
+  when: not ansible_check_mode
+
+- name: Display task completion summary
+  ansible.builtin.debug:
+    msg:
+      - "=========================================="
+      - "Task 1.4.2 - Permissions Configuration Complete"
+      - "=========================================="
+      - ""
+      - "System Users Created/Verified:"
+      - "  ✓ vmail (UID 5000) - Virtual mail storage owner"
+      - "  ✓ postgres (UID 999) - PostgreSQL container user"
+      - ""
+      - "Mail Directories (vmail:vmail, 750):"
+      - "  ✓ /var/mail/vmail/"
+      - "  ✓ /var/mail/queue/"
+      - "  ✓ /var/mail/backups/"
+      - ""
+      - "PostgreSQL Directories:"
+      - "  ✓ /opt/postgres/data/ (postgres:postgres, 700)"
+      - "  ✓ /opt/postgres/wal_archive/ (postgres:postgres, 750)"
+      - "  ✓ /opt/postgres/backups/ (postgres:postgres, 750)"
+      - ""
+      - "Permission Levels:"
+      - "  750 (rwxr-x---) - Owner: full, Group: read/execute, Others: none"
+      - "  700 (rwx------) - Owner: full, Others: none (PostgreSQL requirement)"
+      - ""
+      - "Why These Settings:"
+      - "  - UID 5000 (vmail): Avoids system UID conflicts"
+      - "  - UID 999 (postgres): Matches PostgreSQL container standard"
+      - "  - 700 for data/: Required by PostgreSQL for security"
+      - "  - 750 for others: Allows group access for backups/monitoring"
+      - ""
+      - "Docker Volume Mount Compatibility:"
+      - "  ✓ postgres user (UID 999) matches container UID"
+      - "  ✓ /opt/postgres/data ready for container mount"
+      - "  ✓ Container can read/write to data directory"
+      - ""
+      - "Next Steps (Task 1.4.3):"
+      - "  - Configure disk quotas for /var/mail/vmail/"
+      - "  - Set per-user mail storage limits"
+      - "  - Enable quota enforcement"
+      - "=========================================="

@@ -1,0 +1,13 @@
+---
+# Task 1.4.2: Set proper permissions and ownership for directories
+# Dependencies: Task 1.4.1 (Directory structure created)
+# Purpose: Create system users and configure ownership/permissions for mail and PostgreSQL directories
+# Estimated Duration: 20 minutes
+
+- name: Task 1.4.2 - Set Permissions and Ownership
+  hosts: mail_server
+  become: yes
+  
+  tasks:
+    - name: Include permissions and ownership playbook
+      ansible.builtin.include_tasks: configure_directory_permissions.yml
