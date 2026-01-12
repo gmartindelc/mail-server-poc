@@ -255,22 +255,48 @@ export ANSIBLE_PRIVATE_KEY_FILE=~/SSH_KEYS_CAPITAN_TO_WORKERS/id_ed25519_common
 
   - _Estimate:_ 20 minutes
   - _Dependencies:_ 1.3.1
+  - _Context:_ PostgreSQL will run as Docker container with mounted volumes
+  - _Directories to create:_
 
   ```
-  /var/mail/vmail/
-  /var/mail/queue/
-  /var/mail/backups/
-  /opt/postgres/data/
-  /opt/postgres/wal_archive/
+  Mail Storage:
+  /var/mail/vmail/          # Virtual mail storage (user mailboxes)
+  /var/mail/queue/          # Mail queue (incoming/outgoing)
+  /var/mail/backups/        # Mail system backups
+  
+  PostgreSQL (Docker Container Volumes):
+  /opt/postgres/            # PostgreSQL container base directory
+  /opt/postgres/data/       # Volume mount: PostgreSQL data directory
+  /opt/postgres/wal_archive/  # Volume mount: PostgreSQL WAL archives
+  /opt/postgres/backups/    # PostgreSQL dumps and backup scripts
   ```
 
+  - _Notes:_
+    - PostgreSQL directories are Docker volume mount points
+    - Container image: `postgres:17-alpine`
+    - Container will bind to VPN IP only (10.100.0.25:5432)
+    - Ownership will be set in Task 1.4.2 for container UID compatibility
   - _Assigned to:_
   - _Completed on:_
 
 - [ ] **Task 1.4.2:** Set proper permissions and ownership for directories
 
-  - _Estimate:_ 15 minutes
+  - _Estimate:_ 20 minutes
   - _Dependencies:_ 1.4.1
+  - _What will be done:_
+    - Create `vmail` system user (for mail storage, UID 5000)
+    - Create `postgres` system user (for PostgreSQL container, UID 999 - standard)
+    - Set ownership on mail directories: `vmail:vmail`
+    - Set ownership on PostgreSQL directories: `postgres:postgres`
+    - Configure directory permissions:
+      - Mail directories: 750 (rwxr-x---)
+      - PostgreSQL data: 700 (rwx------) - container requirement
+      - PostgreSQL WAL archive: 750 (rwxr-x---)
+      - Backup directories: 750 (rwxr-x---)
+  - _Notes:_
+    - PostgreSQL container runs as UID 999 (postgres user) by default
+    - Host `postgres` user (UID 999) must match container UID for volume access
+    - vmail UID 5000 chosen to avoid conflicts with system UIDs
   - _Assigned to:_
   - _Completed on:_
 
@@ -284,7 +310,86 @@ export ANSIBLE_PRIVATE_KEY_FILE=~/SSH_KEYS_CAPITAN_TO_WORKERS/id_ed25519_common
 
 ## **Milestone 2: Database Layer Implementation**
 
-## **... (rest of the file remains the same, with task numbers adjusted accordingly)**
+**Status:** [ ]  
+**Dependencies:** Milestone 1 (Task Groups 1.1-1.4) complete
+
+### **Task Group 2.1: PostgreSQL Container Deployment**
+
+**Status:** [ ]
+
+#### **Tasks:**
+
+- [ ] **Task 2.1.1:** Create PostgreSQL Docker Compose configuration
+
+  - _Estimate:_ 30 minutes
+  - _Dependencies:_ 1.4.2 (directories and ownership configured)
+  - _What will be done:_
+    - Create `docker-compose.yml` for PostgreSQL 17
+    - Configure container to bind to VPN IP only (10.100.0.25:5432)
+    - Set up volume mounts:
+      - `/opt/postgres/data:/var/lib/postgresql/data`
+      - `/opt/postgres/wal_archive:/var/lib/postgresql/wal_archive`
+    - Configure environment variables (POSTGRES_PASSWORD, POSTGRES_DB, etc.)
+    - Set up health checks
+    - Configure logging
+  - _Container Spec:_
+    - Image: `postgres:17-alpine`
+    - Network: Host mode with VPN IP binding
+    - Restart policy: unless-stopped
+    - Resource limits: 2GB RAM, 1.5 CPU
+  - _Assigned to:_
+  - _Completed on:_
+
+- [ ] **Task 2.1.2:** Configure PostgreSQL for mail server authentication
+
+  - _Estimate:_ 45 minutes
+  - _Dependencies:_ 2.1.1
+  - _What will be done:_
+    - Create mail authentication database schema
+    - Create tables:
+      - `virtual_domains` - Mail domains
+      - `virtual_users` - User accounts
+      - `virtual_aliases` - Email aliases
+    - Set up PostgreSQL users:
+      - `postfix` - Read-only for Postfix lookups
+      - `dovecot` - Read-only for Dovecot authentication
+      - `sogo` - Read/write for SOGo webmail
+      - `mailadmin` - Admin user for management
+    - Configure password hashing (SHA512-CRYPT)
+    - Set up connection limits and permissions
+  - _Assigned to:_
+  - _Completed on:_
+
+- [ ] **Task 2.1.3:** Configure PostgreSQL backups and WAL archiving
+
+  - _Estimate:_ 30 minutes
+  - _Dependencies:_ 2.1.2
+  - _What will be done:_
+    - Enable WAL archiving in postgresql.conf
+    - Configure archive_command to `/opt/postgres/wal_archive/`
+    - Create backup script for pg_dump
+    - Set up cron job for daily database dumps
+    - Configure backup retention (7 days full, 30 days WAL)
+    - Test backup and restore procedures
+  - _Assigned to:_
+  - _Completed on:_
+
+- [ ] **Task 2.1.4:** Verify PostgreSQL container and connectivity
+
+  - _Estimate:_ 15 minutes
+  - _Dependencies:_ 2.1.3
+  - _What will be done:_
+    - Verify container is running and healthy
+    - Test connectivity from VPN IP (10.100.0.25:5432)
+    - Verify connectivity is blocked from public IP
+    - Test authentication with all service users
+    - Verify WAL archiving is working
+    - Check backup script execution
+    - Document connection strings for services
+  - _Assigned to:_
+  - _Completed on:_
+
+---
 
 **Note:** I've renumbered the task groups to maintain logical flow:
 
