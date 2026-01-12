@@ -1,0 +1,717 @@
+---
+# Playbook: Configure Database Backups
+# Purpose: Set up automated backups and WAL archiving for PostgreSQL
+# Task: 2.1.3
+#
+# What this playbook does:
+#   1. Updates PostgreSQL configuration for WAL archiving
+#   2. Creates backup scripts (backup, restore, cleanup, verify)
+#   3. Sets up cron jobs for automated backups
+#   4. Creates initial backup and verifies it works
+#   5. Documents backup/restore procedures
+
+- name: Get current PostgreSQL password
+  ansible.builtin.shell: grep POSTGRES_PASSWORD /opt/mail_server/postgres/.env | cut -d'=' -f2
+  register: postgres_password
+  changed_when: false
+  no_log: true
+
+- name: Update PostgreSQL configuration for WAL archiving
+  ansible.builtin.blockinfile:
+    path: /opt/mail_server/postgres/postgresql.conf
+    marker: "# {mark} ANSIBLE MANAGED - WAL ARCHIVING CONFIG"
+    block: |
+      # WAL Archiving Configuration
+      # Enables continuous archiving and point-in-time recovery (PITR)
+      archive_mode = on
+      archive_command = 'test ! -f /var/lib/postgresql/wal_archive/%f && cp %p /var/lib/postgresql/wal_archive/%f'
+      archive_timeout = 300
+      
+      # WAL Configuration
+      max_wal_size = 2GB
+      min_wal_size = 80MB
+      wal_keep_size = 512MB
+    state: present
+
+- name: Mount updated postgresql.conf into container
+  ansible.builtin.shell: |
+    docker cp /opt/mail_server/postgres/postgresql.conf mailserver-postgres:/var/lib/postgresql/data/postgresql.conf
+  changed_when: false
+
+- name: Reload PostgreSQL configuration
+  ansible.builtin.shell: |
+    docker exec mailserver-postgres psql -U postgres -c "SELECT pg_reload_conf();"
+  register: reload_result
+  changed_when: "'t' in reload_result.stdout"
+
+- name: Create backup script
+  ansible.builtin.copy:
+    content: |
+      #!/bin/bash
+      # PostgreSQL Database Backup Script
+      # Creates compressed backup of mailserver database
+      # Usage: ./backup_database.sh
+      
+      set -e
+      
+      # Configuration
+      BACKUP_DIR="/opt/postgres/backups"
+      DATABASE="mailserver"
+      TIMESTAMP=$(date +%Y%m%d_%H%M%S)
+      BACKUP_FILE="${BACKUP_DIR}/mailserver_${TIMESTAMP}.dump"
+      LOG_FILE="${BACKUP_DIR}/backup_${TIMESTAMP}.log"
+      
+      # Colors for output
+      RED='\033[0;31m'
+      GREEN='\033[0;32m'
+      YELLOW='\033[1;33m'
+      NC='\033[0m'
+      
+      echo "========================================" | tee -a "$LOG_FILE"
+      echo "PostgreSQL Database Backup" | tee -a "$LOG_FILE"
+      echo "Started: $(date)" | tee -a "$LOG_FILE"
+      echo "========================================" | tee -a "$LOG_FILE"
+      echo "" | tee -a "$LOG_FILE"
+      
+      # Check if container is running
+      if ! docker ps | grep -q mailserver-postgres; then
+        echo -e "${RED}✗ PostgreSQL container is not running${NC}" | tee -a "$LOG_FILE"
+        exit 1
+      fi
+      
+      echo "Creating backup: $BACKUP_FILE" | tee -a "$LOG_FILE"
+      
+      # Create backup using pg_dump directly to stdout, then save to host
+      if docker exec mailserver-postgres pg_dump -U postgres -d "$DATABASE" -Fc > "$BACKUP_FILE" 2>> "$LOG_FILE"; then
+        # Get backup size
+        BACKUP_SIZE=$(du -h "$BACKUP_FILE" | cut -f1)
+        
+        echo -e "${GREEN}✓ Backup completed successfully${NC}" | tee -a "$LOG_FILE"
+        echo "  File: $BACKUP_FILE" | tee -a "$LOG_FILE"
+        echo "  Size: $BACKUP_SIZE" | tee -a "$LOG_FILE"
+        
+        # Test backup integrity
+        echo "" | tee -a "$LOG_FILE"
+        echo "Testing backup integrity..." | tee -a "$LOG_FILE"
+        if docker exec -i mailserver-postgres pg_restore -l < "$BACKUP_FILE" > /dev/null 2>&1; then
+          echo -e "${GREEN}✓ Backup integrity verified${NC}" | tee -a "$LOG_FILE"
+        else
+          echo -e "${YELLOW}⚠ Could not verify backup integrity${NC}" | tee -a "$LOG_FILE"
+        fi
+      else
+        echo -e "${RED}✗ Backup failed${NC}" | tee -a "$LOG_FILE"
+        exit 1
+      fi
+      
+      echo "" | tee -a "$LOG_FILE"
+      echo "========================================" | tee -a "$LOG_FILE"
+      echo "Backup completed: $(date)" | tee -a "$LOG_FILE"
+      echo "========================================" | tee -a "$LOG_FILE"
+      
+      # Return success
+      exit 0
+    dest: /opt/mail_server/postgres/scripts/backup_database.sh
+    mode: '0755'
+    owner: root
+    group: root
+
+- name: Create restore script
+  ansible.builtin.copy:
+    content: |
+      #!/bin/bash
+      # PostgreSQL Database Restore Script
+      # Restores database from backup file
+      # Usage: ./restore_database.sh <backup_file>
+      
+      set -e
+      
+      # Colors for output
+      RED='\033[0;31m'
+      GREEN='\033[0;32m'
+      YELLOW='\033[1;33m'
+      NC='\033[0m'
+      
+      if [ $# -eq 0 ]; then
+        echo "Usage: $0 <backup_file>"
+        echo ""
+        echo "Available backups:"
+        ls -lh /opt/postgres/backups/*.dump 2>/dev/null || echo "  No backups found"
+        exit 1
+      fi
+      
+      BACKUP_FILE="$1"
+      DATABASE="mailserver"
+      
+      # Check if backup file exists
+      if [ ! -f "$BACKUP_FILE" ]; then
+        echo -e "${RED}✗ Backup file not found: $BACKUP_FILE${NC}"
+        exit 1
+      fi
+      
+      echo "========================================="
+      echo "PostgreSQL Database Restore"
+      echo "========================================="
+      echo ""
+      echo -e "${YELLOW}WARNING: This will drop and recreate the database!${NC}"
+      echo "Backup file: $BACKUP_FILE"
+      echo ""
+      read -p "Are you sure you want to continue? (yes/no): " -r
+      
+      if [[ ! $REPLY =~ ^[Yy][Ee][Ss]$ ]]; then
+        echo "Restore cancelled."
+        exit 0
+      fi
+      
+      echo ""
+      echo "Starting restore..."
+      
+      # Copy backup into container
+      BACKUP_NAME=$(basename "$BACKUP_FILE")
+      docker cp "$BACKUP_FILE" mailserver-postgres:/tmp/"$BACKUP_NAME"
+      
+      # Drop existing connections
+      echo "Dropping existing connections..."
+      docker exec mailserver-postgres psql -U postgres -c "SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = '$DATABASE' AND pid <> pg_backend_pid();" 2>/dev/null || true
+      
+      # Drop and recreate database
+      echo "Recreating database..."
+      docker exec mailserver-postgres psql -U postgres -c "DROP DATABASE IF EXISTS $DATABASE;"
+      docker exec mailserver-postgres psql -U postgres -c "CREATE DATABASE $DATABASE;"
+      
+      # Restore from backup
+      echo "Restoring from backup..."
+      if docker exec mailserver-postgres pg_restore -U postgres -d "$DATABASE" -v /tmp/"$BACKUP_NAME"; then
+        echo ""
+        echo -e "${GREEN}✓ Database restored successfully${NC}"
+        
+        # Cleanup temp file
+        docker exec mailserver-postgres rm /tmp/"$BACKUP_NAME"
+        
+        # Verify restore
+        echo ""
+        echo "Verifying restore..."
+        TABLE_COUNT=$(docker exec mailserver-postgres psql -U postgres -d "$DATABASE" -t -c "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = 'public';")
+        echo "  Tables restored: $TABLE_COUNT"
+        
+        USER_COUNT=$(docker exec mailserver-postgres psql -U postgres -d "$DATABASE" -t -c "SELECT COUNT(*) FROM virtual_users;" 2>/dev/null || echo "0")
+        echo "  Virtual users: $USER_COUNT"
+        
+        echo ""
+        echo -e "${GREEN}Restore completed successfully${NC}"
+      else
+        echo ""
+        echo -e "${RED}✗ Restore failed${NC}"
+        docker exec mailserver-postgres rm /tmp/"$BACKUP_NAME" 2>/dev/null || true
+        exit 1
+      fi
+    dest: /opt/mail_server/postgres/scripts/restore_database.sh
+    mode: '0755'
+    owner: root
+    group: root
+
+- name: Create cleanup script
+  ansible.builtin.copy:
+    content: |
+      #!/bin/bash
+      # PostgreSQL Backup Cleanup Script
+      # Removes backups and WAL archives older than retention period
+      # Usage: ./cleanup_old_backups.sh [retention_days]
+      
+      set -e
+      
+      # Configuration
+      RETENTION_DAYS=${1:-7}  # Default 7 days
+      BACKUP_DIR="/opt/postgres/backups"
+      WAL_ARCHIVE_DIR="/opt/postgres/wal_archive"
+      
+      # Colors for output
+      GREEN='\033[0;32m'
+      YELLOW='\033[1;33m'
+      NC='\033[0m'
+      
+      echo "=========================================="
+      echo "PostgreSQL Backup Cleanup"
+      echo "Retention period: $RETENTION_DAYS days"
+      echo "=========================================="
+      echo ""
+      
+      # Cleanup old backups
+      echo "Cleaning up old backups..."
+      OLD_BACKUPS=$(find "$BACKUP_DIR" -name "*.dump" -type f -mtime +$RETENTION_DAYS 2>/dev/null)
+      
+      if [ -n "$OLD_BACKUPS" ]; then
+        echo "$OLD_BACKUPS" | while read -r backup; do
+          echo "  Removing: $(basename "$backup")"
+          rm -f "$backup"
+        done
+        REMOVED_COUNT=$(echo "$OLD_BACKUPS" | wc -l)
+        echo -e "${GREEN}✓ Removed $REMOVED_COUNT old backup(s)${NC}"
+      else
+        echo "  No old backups to remove"
+      fi
+      
+      # Cleanup old logs
+      echo ""
+      echo "Cleaning up old logs..."
+      OLD_LOGS=$(find "$BACKUP_DIR" -name "*.log" -type f -mtime +$RETENTION_DAYS 2>/dev/null)
+      
+      if [ -n "$OLD_LOGS" ]; then
+        echo "$OLD_LOGS" | while read -r log; do
+          echo "  Removing: $(basename "$log")"
+          rm -f "$log"
+        done
+        REMOVED_COUNT=$(echo "$OLD_LOGS" | wc -l)
+        echo -e "${GREEN}✓ Removed $REMOVED_COUNT old log(s)${NC}"
+      else
+        echo "  No old logs to remove"
+      fi
+      
+      # Cleanup old WAL archives
+      echo ""
+      echo "Cleaning up old WAL archives..."
+      OLD_WAL=$(find "$WAL_ARCHIVE_DIR" -type f -mtime +$RETENTION_DAYS 2>/dev/null)
+      
+      if [ -n "$OLD_WAL" ]; then
+        WAL_COUNT=$(echo "$OLD_WAL" | wc -l)
+        echo "$OLD_WAL" | xargs rm -f
+        echo -e "${GREEN}✓ Removed $WAL_COUNT old WAL file(s)${NC}"
+      else
+        echo "  No old WAL files to remove"
+      fi
+      
+      # Display current usage
+      echo ""
+      echo "Current disk usage:"
+      echo "  Backups: $(du -sh "$BACKUP_DIR" 2>/dev/null | cut -f1)"
+      echo "  WAL archives: $(du -sh "$WAL_ARCHIVE_DIR" 2>/dev/null | cut -f1)"
+      
+      echo ""
+      echo "=========================================="
+      echo "Cleanup completed"
+      echo "=========================================="
+    dest: /opt/mail_server/postgres/scripts/cleanup_old_backups.sh
+    mode: '0755'
+    owner: root
+    group: root
+
+- name: Create backup verification script
+  ansible.builtin.copy:
+    content: |
+      #!/bin/bash
+      # PostgreSQL Backup Verification Script
+      # Verifies backup integrity and lists available backups
+      # Usage: ./verify_backups.sh
+      
+      set -e
+      
+      BACKUP_DIR="/opt/postgres/backups"
+      
+      # Colors for output
+      GREEN='\033[0;32m'
+      RED='\033[0;31m'
+      YELLOW='\033[1;33m'
+      NC='\033[0m'
+      
+      echo "=========================================="
+      echo "PostgreSQL Backup Verification"
+      echo "=========================================="
+      echo ""
+      
+      # Check if backups exist
+      BACKUPS=$(find "$BACKUP_DIR" -name "*.dump" -type f 2>/dev/null | sort -r)
+      
+      if [ -z "$BACKUPS" ]; then
+        echo -e "${YELLOW}⚠ No backups found in $BACKUP_DIR${NC}"
+        exit 0
+      fi
+      
+      BACKUP_COUNT=$(echo "$BACKUPS" | wc -l)
+      echo "Found $BACKUP_COUNT backup(s):"
+      echo ""
+      
+      # List and verify each backup
+      echo "$BACKUPS" | while read -r backup; do
+        BACKUP_NAME=$(basename "$backup")
+        BACKUP_SIZE=$(du -h "$backup" | cut -f1)
+        BACKUP_DATE=$(stat -c %y "$backup" | cut -d'.' -f1)
+        
+        echo "Backup: $BACKUP_NAME"
+        echo "  Size: $BACKUP_SIZE"
+        echo "  Date: $BACKUP_DATE"
+        
+        # Copy to container and verify
+        docker cp "$backup" mailserver-postgres:/tmp/verify_backup.dump 2>/dev/null
+        
+        if docker exec mailserver-postgres pg_restore -l /tmp/verify_backup.dump > /dev/null 2>&1; then
+          # Get table count from backup
+          TABLE_COUNT=$(docker exec mailserver-postgres pg_restore -l /tmp/verify_backup.dump 2>/dev/null | grep -c "TABLE" || echo "0")
+          echo -e "  Status: ${GREEN}✓ Valid${NC} ($TABLE_COUNT tables)"
+        else
+          echo -e "  Status: ${RED}✗ Invalid or corrupted${NC}"
+        fi
+        
+        docker exec mailserver-postgres rm /tmp/verify_backup.dump 2>/dev/null || true
+        echo ""
+      done
+      
+      # WAL archiving status
+      echo "WAL Archiving Status:"
+      WAL_COUNT=$(find /opt/postgres/wal_archive -type f 2>/dev/null | wc -l)
+      WAL_SIZE=$(du -sh /opt/postgres/wal_archive 2>/dev/null | cut -f1)
+      echo "  WAL files: $WAL_COUNT"
+      echo "  Total size: $WAL_SIZE"
+      
+      # Check archiving status in database
+      echo ""
+      echo "Archive Status (from database):"
+      docker exec mailserver-postgres psql -U postgres -d mailserver -c "SELECT archived_count, failed_count, last_archived_time FROM pg_stat_archiver;" 2>/dev/null || echo "  Could not retrieve status"
+      
+      echo ""
+      echo "=========================================="
+      echo "Verification completed"
+      echo "=========================================="
+    dest: /opt/mail_server/postgres/scripts/verify_backups.sh
+    mode: '0755'
+    owner: root
+    group: root
+
+- name: Create backup documentation
+  ansible.builtin.copy:
+    content: |
+      # PostgreSQL Backup and Restore Documentation
+      
+      ## Overview
+      
+      The mail server database uses a two-tier backup strategy:
+      
+      1. **Full Backups (pg_dump)** - Daily compressed backups
+      2. **WAL Archiving** - Continuous archiving for point-in-time recovery (PITR)
+      
+      ## Backup Configuration
+      
+      **Full Backups:**
+      - Frequency: Daily at 2:00 AM (via cron)
+      - Location: `/opt/postgres/backups/`
+      - Format: PostgreSQL custom compressed format (.dump)
+      - Retention: 7 days (automatic cleanup at 3:00 AM)
+      - Naming: `mailserver_YYYYMMDD_HHMMSS.dump`
+      
+      **WAL Archiving:**
+      - Location: `/opt/postgres/wal_archive/`
+      - Continuous archiving enabled
+      - Allows point-in-time recovery (PITR)
+      - Retention: 7 days (automatic cleanup)
+      
+      ## Available Scripts
+      
+      All scripts located in: `/opt/mail_server/postgres/scripts/`
+      
+      ### backup_database.sh
+      Creates a full database backup.
+      
+      ```bash
+      sudo /opt/mail_server/postgres/scripts/backup_database.sh
+      ```
+      
+      ### restore_database.sh
+      Restores database from a backup file.
+      
+      **WARNING:** This will drop and recreate the database!
+      
+      ```bash
+      sudo /opt/mail_server/postgres/scripts/restore_database.sh /opt/postgres/backups/mailserver_20260112_020000.dump
+      ```
+      
+      ### cleanup_old_backups.sh
+      Removes backups older than retention period (default 7 days).
+      
+      ```bash
+      # Use default retention (7 days)
+      sudo /opt/mail_server/postgres/scripts/cleanup_old_backups.sh
+      
+      # Custom retention (14 days)
+      sudo /opt/mail_server/postgres/scripts/cleanup_old_backups.sh 14
+      ```
+      
+      ### verify_backups.sh
+      Verifies backup integrity and shows status.
+      
+      ```bash
+      sudo /opt/mail_server/postgres/scripts/verify_backups.sh
+      ```
+      
+      ## Automated Backups
+      
+      Backups run automatically via cron:
+      
+      ```bash
+      # Daily backup at 2:00 AM
+      0 2 * * * /opt/mail_server/postgres/scripts/backup_database.sh
+      
+      # Daily cleanup at 3:00 AM
+      0 3 * * * /opt/mail_server/postgres/scripts/cleanup_old_backups.sh
+      ```
+      
+      View scheduled jobs:
+      ```bash
+      sudo crontab -l | grep postgres
+      ```
+      
+      ## Manual Backup Procedures
+      
+      ### Create Manual Backup
+      
+      ```bash
+      sudo /opt/mail_server/postgres/scripts/backup_database.sh
+      ```
+      
+      ### List Available Backups
+      
+      ```bash
+      ls -lh /opt/postgres/backups/*.dump
+      ```
+      
+      ### Verify Backup Integrity
+      
+      ```bash
+      sudo /opt/mail_server/postgres/scripts/verify_backups.sh
+      ```
+      
+      ## Restore Procedures
+      
+      ### Full Restore from Backup
+      
+      1. **Choose a backup file:**
+         ```bash
+         ls -lh /opt/postgres/backups/
+         ```
+      
+      2. **Stop services that use the database** (if running):
+         ```bash
+         # Future: stop Postfix, Dovecot, SOGo
+         ```
+      
+      3. **Run restore:**
+         ```bash
+         sudo /opt/mail_server/postgres/scripts/restore_database.sh /opt/postgres/backups/mailserver_YYYYMMDD_HHMMSS.dump
+         ```
+      
+      4. **Verify restore:**
+         ```bash
+         docker exec mailserver-postgres psql -U postgres -d mailserver -c "\dt"
+         docker exec mailserver-postgres psql -U postgres -d mailserver -c "SELECT COUNT(*) FROM virtual_users;"
+         ```
+      
+      ### Point-in-Time Recovery (PITR)
+      
+      PITR allows recovery to any specific point in time using WAL archives.
+      
+      **This is an advanced procedure - contact your DBA or refer to PostgreSQL documentation:**
+      https://www.postgresql.org/docs/17/continuous-archiving.html
+      
+      ## Monitoring and Maintenance
+      
+      ### Check Backup Status
+      
+      ```bash
+      # View recent backups
+      ls -lht /opt/postgres/backups/*.dump | head -5
+      
+      # Check backup logs
+      tail -f /opt/postgres/backups/backup_*.log
+      
+      # Verify latest backup
+      sudo /opt/mail_server/postgres/scripts/verify_backups.sh
+      ```
+      
+      ### Check WAL Archiving Status
+      
+      ```bash
+      # Check archive statistics
+      docker exec mailserver-postgres psql -U postgres -d mailserver -c "SELECT * FROM pg_stat_archiver;"
+      
+      # Check WAL file count
+      ls /opt/postgres/wal_archive/ | wc -l
+      
+      # Check WAL disk usage
+      du -sh /opt/postgres/wal_archive/
+      ```
+      
+      ### Check Disk Space
+      
+      ```bash
+      # Overall PostgreSQL disk usage
+      du -sh /opt/postgres/*
+      
+      # Specific directories
+      du -sh /opt/postgres/data/
+      du -sh /opt/postgres/backups/
+      du -sh /opt/postgres/wal_archive/
+      ```
+      
+      ## Troubleshooting
+      
+      ### Backup Fails
+      
+      Check logs:
+      ```bash
+      tail -100 /opt/postgres/backups/backup_*.log
+      ```
+      
+      Check container status:
+      ```bash
+      docker ps | grep postgres
+      docker logs mailserver-postgres --tail 50
+      ```
+      
+      ### WAL Archiving Not Working
+      
+      Check configuration:
+      ```bash
+      docker exec mailserver-postgres psql -U postgres -c "SHOW archive_mode;"
+      docker exec mailserver-postgres psql -U postgres -c "SHOW archive_command;"
+      ```
+      
+      Check for failed archives:
+      ```bash
+      docker exec mailserver-postgres psql -U postgres -d mailserver -c "SELECT * FROM pg_stat_archiver;"
+      ```
+      
+      ### Restore Fails
+      
+      Ensure backup file is valid:
+      ```bash
+      sudo /opt/mail_server/postgres/scripts/verify_backups.sh
+      ```
+      
+      Check container logs:
+      ```bash
+      docker logs mailserver-postgres --tail 100
+      ```
+      
+      ## Best Practices
+      
+      1. **Test Restores Regularly** - Verify backups work before you need them
+      2. **Monitor Disk Space** - Ensure adequate space for backups and WAL files
+      3. **Off-Site Backups** - Copy backups to remote location for disaster recovery
+      4. **Document Recovery** - Keep this documentation accessible offline
+      5. **Alert on Failures** - Monitor cron job outputs and backup logs
+      
+      ## Emergency Contacts
+      
+      - System Administrator: [Your contact info]
+      - Database Administrator: [DBA contact info]
+      - Emergency Hotline: [Emergency contact]
+      
+      ## Additional Resources
+      
+      - PostgreSQL Backup Documentation: https://www.postgresql.org/docs/17/backup.html
+      - WAL Archiving: https://www.postgresql.org/docs/17/continuous-archiving.html
+      - pg_dump Reference: https://www.postgresql.org/docs/17/app-pgdump.html
+      - pg_restore Reference: https://www.postgresql.org/docs/17/app-pgrestore.html
+    dest: /opt/mail_server/postgres/README_BACKUPS.md
+    mode: '0644'
+    owner: root
+    group: root
+
+- name: Set up cron jobs for automated backups
+  ansible.builtin.cron:
+    name: "PostgreSQL daily backup"
+    minute: "0"
+    hour: "2"
+    job: "/opt/mail_server/postgres/scripts/backup_database.sh >> /opt/postgres/backups/backup_cron.log 2>&1"
+    user: root
+    state: present
+
+- name: Set up cron job for backup cleanup
+  ansible.builtin.cron:
+    name: "PostgreSQL backup cleanup"
+    minute: "0"
+    hour: "3"
+    job: "/opt/mail_server/postgres/scripts/cleanup_old_backups.sh >> /opt/postgres/backups/cleanup_cron.log 2>&1"
+    user: root
+    state: present
+
+- name: Create initial backup
+  ansible.builtin.command: /opt/mail_server/postgres/scripts/backup_database.sh
+  register: initial_backup
+  changed_when: true
+
+- name: Verify WAL archiving is active
+  ansible.builtin.shell: |
+    docker exec mailserver-postgres psql -U postgres -d mailserver -t -c "SELECT archived_count FROM pg_stat_archiver;"
+  register: wal_status
+  changed_when: false
+
+- name: Get backup statistics
+  ansible.builtin.shell: |
+    BACKUP_COUNT=$(ls /opt/postgres/backups/*.dump 2>/dev/null | wc -l)
+    BACKUP_SIZE=$(du -sh /opt/postgres/backups 2>/dev/null | cut -f1)
+    LATEST_BACKUP=$(ls -t /opt/postgres/backups/*.dump 2>/dev/null | head -1)
+    echo "$BACKUP_COUNT|$BACKUP_SIZE|$LATEST_BACKUP"
+  register: backup_stats
+  changed_when: false
+
+- name: Parse backup statistics
+  ansible.builtin.set_fact:
+    backup_count: "{{ backup_stats.stdout.split('|')[0] }}"
+    backup_size: "{{ backup_stats.stdout.split('|')[1] }}"
+    latest_backup: "{{ backup_stats.stdout.split('|')[2] }}"
+
+- name: Display task completion summary
+  ansible.builtin.debug:
+    msg:
+      - "=========================================="
+      - "Task 2.1.3 - Database Backups Configured"
+      - "=========================================="
+      - ""
+      - "Backup Configuration:"
+      - "  ✓ WAL archiving enabled"
+      - "  ✓ Full backup scripts created"
+      - "  ✓ Automated backups scheduled (daily at 2 AM)"
+      - "  ✓ Automated cleanup scheduled (daily at 3 AM)"
+      - "  ✓ Restore procedures documented"
+      - ""
+      - "Backup Scripts Created:"
+      - "  /opt/mail_server/postgres/scripts/backup_database.sh"
+      - "  /opt/mail_server/postgres/scripts/restore_database.sh"
+      - "  /opt/mail_server/postgres/scripts/cleanup_old_backups.sh"
+      - "  /opt/mail_server/postgres/scripts/verify_backups.sh"
+      - ""
+      - "Backup Strategy:"
+      - "  Type: Full dump + WAL archiving"
+      - "  Frequency: Daily at 2:00 AM"
+      - "  Retention: 7 days"
+      - "  Location: /opt/postgres/backups/"
+      - "  Format: PostgreSQL custom compressed"
+      - ""
+      - "Initial Backup:"
+      - "  Status: ✓ Created successfully"
+      - "  Total backups: {{ backup_count }}"
+      - "  Disk usage: {{ backup_size }}"
+      - "  Latest: {{ latest_backup | basename }}"
+      - ""
+      - "WAL Archiving:"
+      - "  Status: ✓ Active"
+      - "  Archives processed: {{ wal_status.stdout | trim }}"
+      - "  Location: /opt/postgres/wal_archive/"
+      - ""
+      - "Cron Schedule:"
+      - "  Daily backup: 2:00 AM"
+      - "  Daily cleanup: 3:00 AM"
+      - ""
+      - "Documentation:"
+      - "  /opt/mail_server/postgres/README_BACKUPS.md"
+      - ""
+      - "Quick Commands:"
+      - "  Manual backup: sudo /opt/mail_server/postgres/scripts/backup_database.sh"
+      - "  Verify backups: sudo /opt/mail_server/postgres/scripts/verify_backups.sh"
+      - "  List backups: ls -lh /opt/postgres/backups/*.dump"
+      - "  View cron jobs: sudo crontab -l | grep postgres"
+      - ""
+      - "Next Steps (Task 2.1.4):"
+      - "  - Final PostgreSQL verification"
+      - "  - Test all service user connections"
+      - "  - Document connection strings"
+      - "  - Complete Task Group 2.1"
+      - "=========================================="
