@@ -1,0 +1,246 @@
+# PostgreSQL Connection Guide
+
+**Server:** cucho1.phalkons.com  
+**Database:** mailserver  
+**Network:** VPN Only (10.100.0.25:5432)  
+**Generated:** {{ ansible_date_time.iso8601 }}
+
+---
+
+## Connection Information
+
+### Administrative Access
+
+**Super User (postgres):**
+```
+Host: 10.100.0.25
+Port: 5432
+Database: mailserver
+Username: postgres
+Password: [See /opt/mail_server/postgres/.env]
+```
+
+**Connection String:**
+```
+postgresql://postgres:[PASSWORD]@10.100.0.25:5432/mailserver
+```
+
+**psql Command:**
+```bash
+docker exec -it mailserver-postgres psql -U postgres -d mailserver
+```
+
+---
+
+## Service User Connections
+
+### Postfix (Mail Routing)
+
+**Purpose:** Read-only access for mail routing and virtual domain lookups
+
+**Credentials:**
+```
+Username: postfix
+Password: [See /opt/mail_server/postgres/connection_strings/postfix.env]
+```
+
+**Connection String:**
+```
+postgresql://postfix:[PASSWORD]@10.100.0.25:5432/mailserver
+```
+
+**Permissions:**
+- SELECT on virtual_domains
+- SELECT on virtual_users (email, domain_id only)
+- SELECT on virtual_aliases
+
+**Usage Example:**
+```bash
+# From host
+PGPASSWORD=$(grep POSTGRES_PASSWORD /opt/mail_server/postgres/connection_strings/postfix.env | cut -d= -f2) \
+  docker exec mailserver-postgres psql -U postfix -d mailserver -c "SELECT * FROM virtual_domains;"
+```
+
+---
+
+### Dovecot (IMAP/POP3)
+
+**Purpose:** Read-only access for user authentication and mailbox information
+
+**Credentials:**
+```
+Username: dovecot
+Password: [See /opt/mail_server/postgres/connection_strings/dovecot.env]
+```
+
+**Connection String:**
+```
+postgresql://dovecot:[PASSWORD]@10.100.0.25:5432/mailserver
+```
+
+**Permissions:**
+- SELECT on virtual_users
+- SELECT on user_mailbox_info (view)
+- EXECUTE on verify_password() function
+
+**Usage Example:**
+```bash
+# Test authentication
+PGPASSWORD=$(grep POSTGRES_PASSWORD /opt/mail_server/postgres/connection_strings/dovecot.env | cut -d= -f2) \
+  docker exec mailserver-postgres psql -U dovecot -d mailserver \
+  -c "SELECT verify_password('user@domain.com', 'password');"
+```
+
+---
+
+### SOGo (Webmail)
+
+**Purpose:** Read-write access for webmail operations and password changes
+
+**Credentials:**
+```
+Username: sogo
+Password: [See /opt/mail_server/postgres/connection_strings/sogo.env]
+```
+
+**Connection String:**
+```
+postgresql://sogo:[PASSWORD]@10.100.0.25:5432/mailserver
+```
+
+**Permissions:**
+- SELECT on virtual_users
+- UPDATE on virtual_users (password field only)
+- SELECT on virtual_domains
+
+**Usage Example:**
+```bash
+# Update user password
+PGPASSWORD=$(grep POSTGRES_PASSWORD /opt/mail_server/postgres/connection_strings/sogo.env | cut -d= -f2) \
+  docker exec mailserver-postgres psql -U sogo -d mailserver \
+  -c "UPDATE virtual_users SET password = crypt('newpass', gen_salt('sha512')) WHERE email = 'user@domain.com';"
+```
+
+---
+
+### Mailadmin (Administrative)
+
+**Purpose:** Full access for user management and maintenance
+
+**Credentials:**
+```
+Username: mailadmin
+Password: [See /opt/mail_server/postgres/connection_strings/mailadmin.env]
+```
+
+**Connection String:**
+```
+postgresql://mailadmin:[PASSWORD]@10.100.0.25:5432/mailserver
+```
+
+**Permissions:**
+- Full access to all mail tables (SELECT, INSERT, UPDATE, DELETE)
+- Cannot modify system tables or create databases
+
+**Usage Example:**
+```bash
+# Create new user
+PGPASSWORD=$(grep POSTGRES_PASSWORD /opt/mail_server/postgres/connection_strings/mailadmin.env | cut -d= -f2) \
+  docker exec mailserver-postgres psql -U mailadmin -d mailserver \
+  -c "INSERT INTO virtual_users (domain_id, email, password) VALUES (1, 'newuser@domain.com', crypt('password', gen_salt('sha512')));"
+```
+
+---
+
+## Network Access
+
+**VPN Requirement:**
+All database connections require VPN access to the 10.100.0.0/24 network.
+
+**Firewall Rules:**
+```bash
+# UFW rule (already configured)
+sudo ufw status | grep 5432
+# Should show: 5432 ALLOW 10.100.0.0/24
+```
+
+**Testing Connectivity:**
+```bash
+# From VPN-connected machine
+nc -zv 10.100.0.25 5432
+```
+
+---
+
+## Security Notes
+
+1. **Never expose PostgreSQL to public internet**
+2. **All passwords are stored in files with 0640 permissions (root readable only)**
+3. **Service users follow principle of least privilege**
+4. **Connection strings should be used from configuration files, not hardcoded**
+5. **Rotate service passwords if compromised**
+
+---
+
+## Backup Information
+
+**Backup Location:** `/opt/postgres/backups/`  
+**WAL Archive:** `/opt/postgres/wal_archive/`  
+**Backup Schedule:** Daily at 2:00 AM  
+**Retention:** 7 days
+
+**Manual Backup:**
+```bash
+sudo /opt/mail_server/postgres/scripts/backup_database.sh
+```
+
+**Verify Backups:**
+```bash
+sudo /opt/mail_server/postgres/scripts/verify_backups.sh
+```
+
+---
+
+## Troubleshooting
+
+### Connection Refused
+```bash
+# Check container is running
+docker ps | grep mailserver-postgres
+
+# Check VPN connection
+ping 10.100.0.25
+
+# Check PostgreSQL is listening
+sudo ss -tlnp | grep 5432
+```
+
+### Authentication Failed
+```bash
+# Verify credentials
+sudo /opt/mail_server/postgres/scripts/get_password.sh
+
+# Check service user exists
+docker exec mailserver-postgres psql -U postgres -d mailserver -c "\du"
+```
+
+### Permission Denied
+```bash
+# Check user privileges
+docker exec mailserver-postgres psql -U postgres -d mailserver -c "\dp virtual_users"
+```
+
+---
+
+## Related Documentation
+
+- Database Schema: `/opt/mail_server/postgres/schema.sql`
+- Service User Creation: `/opt/mail_server/postgres/create_users.sql`
+- Management Scripts: `/opt/mail_server/postgres/scripts/`
+- Backup Procedures: `/opt/mail_server/postgres/README.md`
+
+---
+
+**Last Updated:** {{ ansible_date_time.iso8601 }}  
+**Server:** {{ ansible_hostname }}  
+**PostgreSQL Version:** 17 (Alpine)

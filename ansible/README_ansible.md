@@ -2,8 +2,8 @@
 
 **Project:** High-Availability Mail Server Cluster - Phase 1 (Single VPS PoC)  
 **Server:** cucho1.phalkons.com (Debian 13, Vultr VPS)  
-**Last Updated:** 2026-01-12  
-**Status:** Milestone 2 - 75% Complete (Task 2.1.3 Complete - PostgreSQL Backups Configured)
+**Last Updated:** 2026-01-15  
+**Status:** Milestone 2 - Task 2.1.4 Ready (PostgreSQL Verification Package Created)
 
 ---
 
@@ -17,14 +17,20 @@
 - **Task Group 1.3:** System Hardening (SSH hardened, VPN integrated, fail2ban active)
 - **Task Group 1.4:** Directory Structure & Storage (All directories created, permissions set, quota tools prepared)
 
-**Milestone 2: Database Layer Implementation - 75% COMPLETE**
+**Milestone 2: Database Layer Implementation - 75% COMPLETE (Task 2.1.4 Package Created)**
 - **Task 2.1.1:** ✅ PostgreSQL Container Deployed (postgres:17-alpine, VPN-only on 10.100.0.25:5432)
 - **Task 2.1.2:** ✅ Database Schema Configured (virtual_domains, virtual_users, virtual_aliases, service users)
-- **Task 2.1.3:** ✅ Backups Configured (Daily backups, WAL archiving, automated cleanup) ← Latest completion
+- **Task 2.1.3:** ✅ Backups Configured (Daily backups, WAL archiving, automated cleanup)
+- **Task 2.1.4:** 📦 Verification Package Created (Ready for execution - 24 comprehensive checks)
 
 ### ⏳ Next Task
 
-- **Task 2.1.4:** Verify PostgreSQL container and connectivity (Final verification and documentation)
+- **Task 2.1.4:** Verify PostgreSQL container and connectivity
+  - **Status:** 📦 Package created and ready for execution
+  - **Files:** 8 files (playbooks, templates, documentation)
+  - **Checks:** 24 comprehensive verification tests
+  - **Time:** ~2-3 minutes
+  - **Output:** Connection guides, verification report, service credentials
 
 ### 🗄️ Production Services Running
 
@@ -2892,6 +2898,157 @@ sudo crontab -l | grep postgres
 
 ---
 
-**Task Group Version:** 1.0  
-**Last Updated:** 2026-01-12  
-**Status:** ✅ 75% Complete (3 of 4 tasks)
+### Task 2.1.4 - Final PostgreSQL Verification 📦 PACKAGE READY
+
+**Task ID:** 2.1.4  
+**Reusable Playbook:** `playbooks/verify_postgresql_complete.yml`  
+**Duration:** ~2-3 minutes  
+**Dependencies:** Tasks 2.1.1, 2.1.2, 2.1.3 (Complete PostgreSQL setup)  
+**Status:** 📦 Complete package created - ready for execution
+
+**What it does:**
+
+1. **Container Health Verification:**
+   - Validates PostgreSQL container is running and healthy
+   - Confirms VPN-only binding (10.100.0.25:5432)
+   - Verifies no public internet exposure
+
+2. **Service User Authentication (24 checks):**
+   - Tests all 4 service users (postfix, dovecot, sogo, mailadmin)
+   - Validates correct permission levels for each user
+   - Verifies read-only vs read-write access
+   - Tests administrative capabilities
+
+3. **Schema Integrity Validation:**
+   - Confirms all tables exist (virtual_domains, virtual_users, virtual_aliases)
+   - Validates views (user_mailbox_info)
+   - Tests functions (verify_password)
+   - Verifies test data integrity
+
+4. **Authentication Function Testing:**
+   - Tests password verification with correct credentials
+   - Verifies rejection of incorrect passwords
+   - Validates SHA512-CRYPT hashing
+
+5. **Backup System Verification:**
+   - Confirms backup files exist
+   - Validates WAL archiving is enabled and functioning
+   - Checks cron job configuration
+   - Verifies backup scripts are executable
+
+6. **Documentation Generation:**
+   - Creates comprehensive connection guide for all services
+   - Generates service-specific environment files (.env)
+   - Produces detailed verification report with timestamp
+
+**Files Created (8 total):**
+
+```
+Task Package:
+├── task_2.1.4.yml                              # Main task wrapper
+├── playbooks/
+│   └── verify_postgresql_complete.yml          # Verification logic (500+ lines)
+├── templates/
+│   ├── connection_strings_doc.j2               # Connection guide template
+│   ├── service_env.j2                          # Service .env template
+│   └── verification_report.j2                  # Report template
+└── documentation/
+    ├── TASK_SUMMARY.md                         # Executive summary
+    ├── README_TASK_2.1.4.md                    # Complete documentation
+    └── QUICK_REFERENCE_2.1.4.md                # Quick reference
+
+Generated on Server:
+├── /opt/mail_server/postgres/connection_info/
+│   └── connection_guide.md                     # Complete connection documentation
+├── /opt/mail_server/postgres/connection_strings/
+│   ├── postfix.env                             # Postfix credentials
+│   ├── dovecot.env                             # Dovecot credentials
+│   ├── sogo.env                                # SOGo credentials
+│   └── mailadmin.env                           # Admin credentials
+└── /opt/mail_server/postgres/verification_reports/
+    └── verification_YYYY-MM-DD_HHMMSS.md       # Timestamped report
+```
+
+**Command:**
+```bash
+./run_task.sh 2.1.4
+```
+
+**Alternative (One-liner):**
+```bash
+export ANSIBLE_HOST=10.100.0.25 ANSIBLE_REMOTE_PORT=2288 ANSIBLE_REMOTE_USER=phalkonadmin ANSIBLE_PRIVATE_KEY_FILE=~/SSH_KEYS_CAPITAN_TO_WORKERS/id_ed25519_common && ansible-playbook -i "${ANSIBLE_HOST}," -e "ansible_port=${ANSIBLE_REMOTE_PORT}" -e "ansible_user=${ANSIBLE_REMOTE_USER}" --private-key="${ANSIBLE_PRIVATE_KEY_FILE}" task_2.1.4.yml
+```
+
+**Verification Checks (24 total):**
+
+| Category | Checks | Expected Result |
+|----------|--------|-----------------|
+| Container Status | Running, Health | ✓ Up and healthy |
+| Network Binding | VPN-only access | ✓ 10.100.0.25:5432 |
+| Service Users | 4 authentications | ✓ All connected |
+| Permissions | User access levels | ✓ Correct isolation |
+| Schema | 3 tables, 1 view, 1 function | ✓ All present |
+| Authentication | Password tests | ✓ Working correctly |
+| Backups | Files and WAL | ✓ Available |
+| Automation | Cron jobs | ✓ Configured |
+
+**Post-Execution Review:**
+```bash
+# SSH to server
+ssh -p 2288 phalkonadmin@10.100.0.25
+
+# View connection guide
+sudo cat /opt/mail_server/postgres/connection_info/connection_guide.md
+
+# View verification report
+sudo cat /opt/mail_server/postgres/verification_reports/verification_*.md
+
+# Test service connection
+source /opt/mail_server/postgres/connection_strings/postfix.env
+docker exec mailserver-postgres psql -U $POSTGRES_USER -d $POSTGRES_DB -c "SELECT * FROM virtual_domains;"
+```
+
+**Expected Output:**
+```
+✓ Container Status: Running and Healthy
+✓ Network Binding: VPN-only (10.100.0.25:5432)
+✓ Service Users: All authenticated successfully
+✓ Database Schema: All tables, views, and functions present
+✓ Authentication: Password verification working correctly
+✓ Backups: X backup(s) available
+✓ WAL Archiving: Enabled and functioning
+✓ Cron Jobs: Automated backups configured
+
+Task Group 2.1 is now 100% complete!
+Ready to proceed with Task Group 2.2 (Postfix MTA)
+```
+
+**Success Criteria:**
+- ✅ All 24 verification checks pass
+- ✅ Service users authenticate successfully
+- ✅ Database schema is complete
+- ✅ Authentication functions work correctly
+- ✅ Backup system operational
+- ✅ Documentation generated
+- ✅ No errors in playbook execution
+
+**What Gets Documented:**
+- Complete connection strings for all services
+- Usage examples and commands
+- Security best practices
+- Troubleshooting procedures
+- Network access requirements
+- Backup and recovery information
+
+**Security Highlights:**
+- Validates VPN-only access (no public exposure)
+- Confirms service user permission isolation
+- Verifies credential file protection (0640)
+- Tests SCRAM-SHA-256 authentication
+- Validates SHA512-CRYPT password hashing
+
+---
+
+**Task Group Version:** 1.1  
+**Last Updated:** 2026-01-15  
+**Status:** 📦 Task 2.1.4 Package Ready - 75% Complete (3 of 4 tasks executed, 1 packaged)

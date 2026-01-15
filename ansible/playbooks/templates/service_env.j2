@@ -1,0 +1,21 @@
+# PostgreSQL Connection Environment for {{ service_name | upper }}
+# Generated: {{ ansible_date_time.iso8601 }}
+# Purpose: Environment variables for {{ service_name }} service
+
+# Database Connection
+POSTGRES_HOST=10.100.0.25
+POSTGRES_PORT=5432
+POSTGRES_DB=mailserver
+POSTGRES_USER={{ service_name }}
+POSTGRES_PASSWORD={{ service_password }}
+
+# Connection String
+DATABASE_URL=postgresql://{{ service_name }}:{{ service_password }}@10.100.0.25:5432/mailserver
+
+# Connection Pool Settings (adjust per service needs)
+DB_POOL_SIZE=10
+DB_MAX_OVERFLOW=20
+DB_POOL_TIMEOUT=30
+
+# SSL Mode (not required on VPN)
+POSTGRES_SSLMODE=disable
