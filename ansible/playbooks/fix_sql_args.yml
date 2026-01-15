@@ -1,0 +1,42 @@
+---
+- name: Fix SQL auth blocks
+  hosts: all
+  become: yes
+  tasks:
+    - name: Remove broken SQL auth block
+      ansible.builtin.shell:
+        cmd: sed -i '/# BEGIN SQL AUTH/,/# END SQL AUTH/d' /etc/dovecot/conf.d/10-auth.conf
+      changed_when: true
+      
+    - name: Add proper SQL auth block
+      ansible.builtin.blockinfile:
+        path: /etc/dovecot/conf.d/10-auth.conf
+        marker: "# {mark} SQL AUTH"
+        block: |
+          passdb sql {
+            args = /etc/dovecot/dovecot-sql.conf.ext
+          }
+          
+          userdb sql {
+            args = /etc/dovecot/dovecot-sql.conf.ext
+          }
+        insertafter: EOF
+        
+    - name: Restart Dovecot
+      ansible.builtin.systemd:
+        name: dovecot
+        state: restarted
+        
+    - name: Wait
+      ansible.builtin.pause:
+        seconds: 3
+        
+    - name: Check logs
+      ansible.builtin.command:
+        cmd: journalctl -u dovecot -n 10 --no-pager
+      register: logs
+      changed_when: false
+      
+    - name: Display
+      ansible.builtin.debug:
+        msg: "{{ logs.stdout_lines }}"

@@ -1,0 +1,25 @@
+---
+- name: Check latest delivery
+  hosts: all
+  become: yes
+  tasks:
+    - name: Check for latest queued message
+      ansible.builtin.command:
+        cmd: grep "62AFD3E5BC4" /var/log/mail.log
+      register: logs
+      changed_when: false
+      failed_when: false
+      
+    - name: Display
+      ansible.builtin.debug:
+        msg: "{{ logs.stdout_lines }}"
+        
+    - name: Check Postfix queue
+      ansible.builtin.command:
+        cmd: mailq
+      register: queue
+      changed_when: false
+      
+    - name: Display queue
+      ansible.builtin.debug:
+        msg: "{{ queue.stdout_lines }}"

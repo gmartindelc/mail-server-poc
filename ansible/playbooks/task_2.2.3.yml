@@ -1,0 +1,26 @@
+---
+# Task 2.2.3: Configure SPF/DKIM/DMARC
+# 
+# Purpose: Set up email authentication and anti-spoofing
+# - Install OpenDKIM for email signing
+# - Generate DKIM keys for domains
+# - Configure SPF/DKIM/DMARC records
+# - Integrate with Postfix
+# - Document DNS records
+#
+# Usage: ansible-playbook playbooks/task_2.2.3.yml
+
+- name: Task 2.2.3 - Configure SPF/DKIM/DMARC
+  hosts: all
+  become: yes
+  gather_facts: yes
+  
+  tasks:
+    - name: Include OpenDKIM installation playbook
+      ansible.builtin.include_tasks:
+        file: install_opendkim.yml
+      tags:
+        - opendkim
+        - dkim
+        - mail
+        - authentication

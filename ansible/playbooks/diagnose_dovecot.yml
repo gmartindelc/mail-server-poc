@@ -1,0 +1,32 @@
+---
+- name: Diagnose Dovecot Configuration
+  hosts: all
+  become: yes
+  tasks:
+    - name: Check what auth-sql.conf.ext looks like by default
+      ansible.builtin.command:
+        cmd: |
+          if [ -f /usr/share/dovecot/examples/auth-sql.conf.ext ]; then
+            cat /usr/share/dovecot/examples/auth-sql.conf.ext
+          elif [ -f /usr/share/doc/dovecot-core/examples/auth-sql.conf.ext ]; then
+            cat /usr/share/doc/dovecot-core/examples/auth-sql.conf.ext
+          else
+            echo "No example file found"
+          fi
+      register: example_file
+      changed_when: false
+      
+    - name: Display example configuration
+      ansible.builtin.debug:
+        msg: "{{ example_file.stdout_lines }}"
+        
+    - name: Check current 10-auth.conf
+      ansible.builtin.command:
+        cmd: tail -n 30 /etc/dovecot/conf.d/10-auth.conf
+      register: current_auth
+      changed_when: false
+      
+    - name: Display current 10-auth.conf
+      ansible.builtin.debug:
+        msg: "{{ current_auth.stdout_lines }}"
+        

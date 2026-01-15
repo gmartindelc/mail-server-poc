@@ -1,0 +1,25 @@
+---
+- name: Check mail delivery logs
+  hosts: all
+  become: yes
+  tasks:
+    - name: Check Postfix logs
+      ansible.builtin.command:
+        cmd: grep "48B053E5DBD" /var/log/mail.log
+      register: postfix_logs
+      changed_when: false
+      failed_when: false
+      
+    - name: Display Postfix logs for that message
+      ansible.builtin.debug:
+        msg: "{{ postfix_logs.stdout_lines }}"
+        
+    - name: Check Dovecot logs
+      ansible.builtin.command:
+        cmd: journalctl -u dovecot -n 100 --no-pager
+      register: dovecot_logs
+      changed_when: false
+      
+    - name: Display recent Dovecot logs
+      ansible.builtin.debug:
+        msg: "{{ dovecot_logs.stdout_lines[-30:] }}"

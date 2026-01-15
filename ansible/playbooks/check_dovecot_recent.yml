@@ -1,0 +1,25 @@
+---
+- name: Check recent Dovecot LMTP logs
+  hosts: all
+  become: yes
+  tasks:
+    - name: Get recent Dovecot logs
+      ansible.builtin.command:
+        cmd: journalctl -u dovecot --since "5 minutes ago" --no-pager
+      register: logs
+      changed_when: false
+      
+    - name: Display
+      ansible.builtin.debug:
+        msg: "{{ logs.stdout_lines }}"
+        
+    - name: Test doveadm auth manually
+      ansible.builtin.command:
+        cmd: doveadm auth test testuser1@testdomain.local TestPass123!
+      register: auth_test
+      changed_when: false
+      failed_when: false
+      
+    - name: Display auth test
+      ansible.builtin.debug:
+        msg: "{{ auth_test.stdout_lines }}"

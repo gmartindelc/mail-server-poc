@@ -1,0 +1,175 @@
+---
+# Reusable Playbook: Install and Configure Postfix MTA
+# 
+# Purpose: Deploy Postfix mail transfer agent with PostgreSQL integration
+# Can be included by task wrappers or run standalone
+
+- name: Install Postfix and dependencies
+  ansible.builtin.apt:
+    name:
+      - postfix
+      - postfix-pgsql
+      - mailutils
+    state: present
+    update_cache: yes
+  
+- name: Stop Postfix for configuration
+  ansible.builtin.systemd:
+    name: postfix
+    state: stopped
+  
+- name: Read Postfix database password
+  ansible.builtin.shell:
+    cmd: |
+      awk '/Postfix \(Mail Routing\):/,/Connection:/ {
+        if ($1 == "Password:") print $2
+      }' /root/postgres_service_users.txt
+  register: postfix_db_password
+  changed_when: false
+  no_log: true
+
+- name: Debug - Show password retrieval (remove in production)
+  ansible.builtin.debug:
+    msg: "Password retrieved: {{ 'YES' if postfix_db_password.stdout != '' else 'NO' }} (length: {{ postfix_db_password.stdout | length }})"
+
+- name: Verify password was retrieved
+  ansible.builtin.fail:
+    msg: "Failed to retrieve Postfix password from {{ postgres_credentials_file }}"
+  when: postfix_db_password.stdout == ""
+
+- name: Configure main.cf - Basic settings
+  ansible.builtin.lineinfile:
+    path: /etc/postfix/main.cf
+    regexp: "{{ item.regexp }}"
+    line: "{{ item.line }}"
+    create: yes
+  loop:
+    - { regexp: '^myhostname', line: 'myhostname = {{ postfix_myhostname }}' }
+    - { regexp: '^mydomain', line: 'mydomain = {{ postfix_mydomain }}' }
+    - { regexp: '^myorigin', line: 'myorigin = {{ postfix_myorigin }}' }
+    - { regexp: '^inet_interfaces', line: 'inet_interfaces = all' }
+    - { regexp: '^inet_protocols', line: 'inet_protocols = ipv4' }
+    - { regexp: '^mydestination', line: 'mydestination = localhost' }
+    - { regexp: '^relay_domains', line: 'relay_domains = ' }
+    - { regexp: '^home_mailbox', line: 'home_mailbox = Maildir/' }
+
+- name: Configure main.cf - Virtual domain support
+  ansible.builtin.blockinfile:
+    path: /etc/postfix/main.cf
+    marker: "# {mark} ANSIBLE MANAGED - Virtual Domain Support"
+    block: |
+      # Virtual domain settings
+      virtual_mailbox_domains = pgsql:/etc/postfix/pgsql-virtual-mailbox-domains.cf
+      virtual_mailbox_maps = pgsql:/etc/postfix/pgsql-virtual-mailbox-maps.cf
+      virtual_alias_maps = pgsql:/etc/postfix/pgsql-virtual-alias-maps.cf
+      virtual_transport = lmtp:unix:private/dovecot-lmtp
+
+- name: Create PostgreSQL lookup file for virtual domains
+  ansible.builtin.copy:
+    dest: /etc/postfix/pgsql-virtual-mailbox-domains.cf
+    content: |
+      hosts = {{ postgres_host }}
+      user = postfix
+      password = {{ postfix_db_password.stdout }}
+      dbname = {{ postgres_db }}
+      query = SELECT 1 FROM virtual_domains WHERE name='%s'
+    mode: '0640'
+    owner: root
+    group: postfix
+  no_log: true
+
+- name: Create PostgreSQL lookup file for virtual mailboxes
+  ansible.builtin.copy:
+    dest: /etc/postfix/pgsql-virtual-mailbox-maps.cf
+    content: |
+      hosts = {{ postgres_host }}
+      user = postfix
+      password = {{ postfix_db_password.stdout }}
+      dbname = {{ postgres_db }}
+      query = SELECT 1 FROM virtual_users WHERE email='%s'
+    mode: '0640'
+    owner: root
+    group: postfix
+  no_log: true
+
+- name: Create PostgreSQL lookup file for virtual aliases
+  ansible.builtin.copy:
+    dest: /etc/postfix/pgsql-virtual-alias-maps.cf
+    content: |
+      hosts = {{ postgres_host }}
+      user = postfix
+      password = {{ postfix_db_password.stdout }}
+      dbname = {{ postgres_db }}
+      query = SELECT destination FROM virtual_aliases WHERE source='%s'
+    mode: '0640'
+    owner: root
+    group: postfix
+  no_log: true
+
+- name: Configure master.cf - Submission port
+  ansible.builtin.blockinfile:
+    path: /etc/postfix/master.cf
+    marker: "# {mark} ANSIBLE MANAGED - Submission Port"
+    block: |
+      submission inet n       -       y       -       -       smtpd
+        -o syslog_name=postfix/submission
+        -o smtpd_tls_security_level=encrypt
+        -o smtpd_sasl_auth_enable=yes
+        -o smtpd_client_restrictions=permit_sasl_authenticated,reject
+
+- name: Ensure mail spool directory exists
+  ansible.builtin.file:
+    path: /var/mail/vmail
+    state: directory
+    owner: vmail
+    group: vmail
+    mode: '0750'
+
+- name: Test Postfix configuration
+  ansible.builtin.command:
+    cmd: postfix check
+  register: postfix_check
+  changed_when: false
+  failed_when: false
+
+- name: Display configuration check result
+  ansible.builtin.debug:
+    msg: "{{ postfix_check.stderr if postfix_check.stderr else 'Configuration OK' }}"
+
+- name: Start and enable Postfix
+  ansible.builtin.systemd:
+    name: postfix
+    state: started
+    enabled: yes
+
+- name: Test PostgreSQL connectivity from Postfix
+  ansible.builtin.command:
+    cmd: postmap -q {{ mail_test_domain }} pgsql:/etc/postfix/pgsql-virtual-mailbox-domains.cf
+  register: domain_test
+  changed_when: false
+  failed_when: false
+
+- name: Display domain lookup result
+  ansible.builtin.debug:
+    msg: "Domain lookup: {{ domain_test.stdout if domain_test.stdout else 'No result (check PostgreSQL connection)' }}"
+
+- name: Display completion summary
+  ansible.builtin.debug:
+    msg:
+      - "=========================================="
+      - "Postfix Installation Complete"
+      - "=========================================="
+      - ""
+      - "✓ Postfix installed and configured"
+      - "✓ PostgreSQL integration configured"
+      - "✓ Virtual domain support enabled"
+      - "✓ Submission port (587) configured"
+      - "✓ Mail directories created"
+      - ""
+      - "Test commands:"
+      - "  sudo postfix status"
+      - "  sudo postmap -q {{ mail_test_domain }} pgsql:/etc/postfix/pgsql-virtual-mailbox-domains.cf"
+      - "  sudo postmap -q testuser1@{{ mail_test_domain }} pgsql:/etc/postfix/pgsql-virtual-mailbox-maps.cf"
+      - ""
+      - "Next: Configure Dovecot IMAP/POP3 server"
+      - "=========================================="

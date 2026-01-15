@@ -1,0 +1,63 @@
+---
+# Debug Mail System Issues
+# Run this to investigate the failures
+
+- name: Debug Mail System
+  hosts: all
+  become: yes
+  tasks:
+    - name: Check OpenDKIM logs
+      ansible.builtin.command:
+        cmd: journalctl -u opendkim -n 50 --no-pager
+      register: opendkim_logs
+      changed_when: false
+      
+    - name: Display OpenDKIM logs
+      ansible.builtin.debug:
+        msg: "{{ opendkim_logs.stdout_lines }}"
+    
+    - name: Test Postfix PostgreSQL connection manually
+      ansible.builtin.shell:
+        cmd: |
+          cd /etc/postfix
+          postmap -q testdomain.local pgsql:./pgsql-virtual-mailbox-domains.cf
+      register: postmap_test
+      changed_when: false
+      failed_when: false
+      
+    - name: Display postmap test
+      ansible.builtin.debug:
+        msg: 
+          - "Return code: {{ postmap_test.rc }}"
+          - "Output: {{ postmap_test.stdout }}"
+          - "Error: {{ postmap_test.stderr }}"
+    
+    - name: Check Postfix PostgreSQL config files
+      ansible.builtin.command:
+        cmd: "cat {{ item }}"
+      loop:
+        - /etc/postfix/pgsql-virtual-mailbox-domains.cf
+      register: postfix_configs
+      changed_when: false
+      
+    - name: Display Postfix configs
+      ansible.builtin.debug:
+        msg: "{{ item.stdout_lines }}"
+      loop: "{{ postfix_configs.results }}"
+      no_log: false
+      
+    - name: Test PostgreSQL connection directly
+      ansible.builtin.shell:
+        cmd: |
+          PGPASSWORD=$(grep '^postfix:' /root/postgres_service_users.txt | awk '{print $2}')
+          psql -h {{ postgres_host }} -U postfix -d {{ postgres_db }} -c "SELECT 1 FROM virtual_domains WHERE name='testdomain.local'"
+      register: direct_db_test
+      changed_when: false
+      failed_when: false
+      no_log: true
+      
+    - name: Display direct DB test
+      ansible.builtin.debug:
+        msg: 
+          - "Return code: {{ direct_db_test.rc }}"
+          - "Output: {{ direct_db_test.stdout }}"

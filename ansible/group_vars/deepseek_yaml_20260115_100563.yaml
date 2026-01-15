@@ -1,0 +1,83 @@
+---
+# Group Variables for Mail Server
+# Location: ansible/group_vars/all.yml
+
+# Server Network Configuration
+mail_server_public_ip: "45.32.207.84"
+mail_server_vpn_ip: "10.100.0.25"
+mail_server_vpn_network: "10.100.0.0/24"
+
+# Server Identity
+mail_server_hostname: "cucho1.phalkons.com"
+mail_server_domain: "phalkons.com"
+
+# Test/Demo Domain
+mail_test_domain: "testdomain.local"
+
+# Database Configuration
+postgres_host: "{{ mail_server_vpn_ip }}"
+postgres_port: 5432
+postgres_db: "mailserver"
+postgres_container_name: "mailserver-postgres"
+postgres_admin_user: "postgres"
+
+# Database Service Users
+postgres_mail_user: "mailuser"
+postgres_postfix_user: "postfix_user"
+postgres_dovecot_user: "dovecot_user"
+postgres_sogo_user: "sogo_user"
+
+# Database Table Names
+postgres_table_mailbox: "mailbox"
+postgres_table_alias: "alias"
+postgres_table_domain: "domain"
+
+# Mail Service Users (UIDs must match those created in Task 1.4.2)
+vmail_uid: 5000
+vmail_gid: 5000
+postgres_uid: 999
+
+# Directory Paths
+mail_vmail_dir: "/var/mail/vmail"
+mail_queue_dir: "/var/mail/queue"
+mail_backup_dir: "/var/mail/backups"
+postgres_data_dir: "/opt/postgres/data"
+postgres_wal_dir: "/opt/postgres/wal_archive"
+postgres_backup_dir: "/opt/postgres/backups"
+mail_server_config_dir: "/opt/mail_server"
+postgres_project_dir: "/opt/mail_server/postgres"
+postgres_scripts_dir: "/opt/mail_server/postgres/scripts"
+
+# Service Credentials Locations
+postgres_credentials_file: "/root/postgres_service_users.txt"
+postgres_env_file: "/opt/mail_server/postgres/.env"
+postgres_connection_strings_dir: "/opt/mail_server/postgres/connection_strings"
+
+# SSL/TLS Configuration
+ssl_cert_path: "/etc/ssl/certs/ssl-cert-snakeoil.pem"
+ssl_key_path: "/etc/ssl/private/ssl-cert-snakeoil.key"
+
+# OpenDKIM Configuration
+opendkim_socket: "inet:8891@localhost"
+dkim_selector: "mail"
+
+# Postfix Configuration
+postfix_myhostname: "{{ mail_server_hostname }}"
+postfix_mydomain: "{{ mail_server_domain }}"
+postfix_myorigin: "$mydomain"
+
+# Dovecot Configuration
+dovecot_protocols: "imap lmtp"
+dovecot_mail_location: "maildir:{{ mail_vmail_dir }}/%d/%n"
+
+# Test User Configuration
+mail_test_username: "testuser1"
+mail_test_password: "TestPass123!"
+mail_test_email: "{{ mail_test_username }}@{{ mail_test_domain }}"
+mail_test_alias: "admin@{{ mail_test_domain }}"
+
+# Database Connection Templates
+postgres_admin_connection: "postgresql://{{ postgres_admin_user }}:%s@{{ postgres_host }}:{{ postgres_port }}/{{ postgres_db }}"
+postgres_postfix_connection: "postgresql://{{ postgres_postfix_user }}:%s@{{ postgres_host }}:{{ postgres_port }}/{{ postgres_db }}"
+postgres_dovecot_connection: "postgresql://{{ postgres_dovecot_user }}:%s@{{ postgres_host }}:{{ postgres_port }}/{{ postgres_db }}"
+postgres_sogo_connection: "postgresql://{{ postgres_sogo_user }}:%s@{{ postgres_host }}:{{ postgres_port }}/{{ postgres_db }}"

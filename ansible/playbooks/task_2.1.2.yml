@@ -1,13 +1,64 @@
 ---
-# Task 2.1.2: Configure PostgreSQL for mail server authentication
-# Dependencies: Task 2.1.1 (PostgreSQL container running)
-# Purpose: Create database schema, service users, and initial test data
-# Estimated Duration: 45 minutes
+# Task 2.1.2: Create Mail Server Database Schema and Users
+# 
+# Purpose: Orchestrate database schema and service user creation
+#          This task includes reusable playbooks for modularity
 
-- name: Task 2.1.2 - Configure Mail Database Schema
-  hosts: mail_server
+- name: Task 2.1.2 - Create Mail Server Database Schema and Users
+  hosts: all
   become: yes
+  gather_facts: yes
+  
+  vars_files:
+    - ../group_vars/all.yml
   
   tasks:
-    - name: Include mail database configuration playbook
-      ansible.builtin.include_tasks: configure_mail_database.yml
+    - name: Include database schema configuration playbook
+      ansible.builtin.include_tasks:
+        file: configure_mail_database.yml
+      tags:
+        - database
+        - schema
+        
+    - name: Display task completion summary
+      ansible.builtin.debug:
+        msg:
+          - "=========================================="
+          - "Task 2.1.2 - Database Schema and Users Complete"
+          - "=========================================="
+          - ""
+          - "✅ Dovecot 2.4 compatible schema created:"
+          - "  - {{ postgres_table_mailbox }} table"
+          - "  - {{ postgres_table_alias }} table"
+          - "  - {{ postgres_table_domain }} table"
+          - ""
+          - "✅ PostgreSQL service users created:"
+          - "  - {{ postgres_postfix_user }} (Postfix mail routing)"
+          - "  - {{ postgres_dovecot_user }} (Dovecot authentication)"
+          - "  - {{ postgres_sogo_user }} (SOGo webmail)"
+          - "  - {{ postgres_mail_user }} (Mail application user)"
+          - ""
+          - "✅ Database permissions configured"
+          - "✅ Service credentials saved to: {{ postgres_credentials_file }}"
+          - "✅ Connection strings saved to: {{ postgres_connection_strings_dir }}/"
+          - ""
+          - "Test Data Available:"
+          - "  Domain: {{ mail_test_domain }}"
+          - "  User: {{ mail_test_email }}"
+          - "  Password: {{ mail_test_password }}"
+          - "  Alias: {{ mail_test_alias }} → {{ mail_test_email }}"
+          - ""
+          - "To test Dovecot authentication:"
+          - "  doveadm auth test {{ mail_test_email }} {{ mail_test_password }}"
+          - ""
+          - "Connection Strings:"
+          - "  Postfix: {{ postgres_postfix_connection | format('*****') }}"
+          - "  Dovecot: {{ postgres_dovecot_connection | format('*****') }}"
+          - "  SOGo: {{ postgres_sogo_connection | format('*****') }}"
+          - ""
+          - "Next Steps:"
+          - "  - Install and configure Postfix (Task 2.2.1)"
+          - "  - Install and configure Dovecot (Task 2.2.2)"
+          - "  - Configure SPF/DKIM/DMARC (Task 2.2.3)"
+          - "  - End-to-end mail flow test (Task 2.2.4)"
+          - "=========================================="

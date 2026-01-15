@@ -1,0 +1,32 @@
+---
+- name: Restart Dovecot properly
+  hosts: all
+  become: yes
+  tasks:
+    - name: Stop Dovecot completely
+      ansible.builtin.systemd:
+        name: dovecot
+        state: stopped
+        
+    - name: Wait 2 seconds
+      ansible.builtin.pause:
+        seconds: 2
+        
+    - name: Start Dovecot
+      ansible.builtin.systemd:
+        name: dovecot
+        state: started
+        
+    - name: Wait for startup
+      ansible.builtin.pause:
+        seconds: 3
+        
+    - name: Check Dovecot logs after restart
+      ansible.builtin.command:
+        cmd: journalctl -u dovecot -n 20 --no-pager
+      register: logs
+      changed_when: false
+      
+    - name: Display logs
+      ansible.builtin.debug:
+        msg: "{{ logs.stdout_lines }}"

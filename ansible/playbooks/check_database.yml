@@ -1,0 +1,24 @@
+---
+- name: Check database content
+  hosts: all
+  become: yes
+  tasks:
+    - name: Check domains in database
+      ansible.builtin.command:
+        cmd: docker exec mailserver-postgres psql -U postgres -d mailserver -c "SELECT * FROM virtual_domains;"
+      register: domains
+      changed_when: false
+      
+    - name: Display domains
+      ansible.builtin.debug:
+        msg: "{{ domains.stdout_lines }}"
+        
+    - name: Check users in database
+      ansible.builtin.command:
+        cmd: docker exec mailserver-postgres psql -U postgres -d mailserver -c "SELECT email FROM virtual_users;"
+      register: users
+      changed_when: false
+      
+    - name: Display users
+      ansible.builtin.debug:
+        msg: "{{ users.stdout_lines }}"

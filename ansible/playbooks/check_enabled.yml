@@ -1,0 +1,34 @@
+---
+- name: Check enabled status
+  hosts: all
+  become: yes
+  tasks:
+    - name: Check domain enabled status
+      ansible.builtin.command:
+        cmd: docker exec mailserver-postgres psql -U postgres -d mailserver -c "SELECT id, name, enabled FROM virtual_domains;"
+      register: domain_status
+      changed_when: false
+      
+    - name: Display domain status
+      ansible.builtin.debug:
+        msg: "{{ domain_status.stdout_lines }}"
+        
+    - name: Check user enabled status
+      ansible.builtin.command:
+        cmd: docker exec mailserver-postgres psql -U postgres -d mailserver -c "SELECT email, enabled FROM virtual_users;"
+      register: user_status
+      changed_when: false
+      
+    - name: Display user status
+      ansible.builtin.debug:
+        msg: "{{ user_status.stdout_lines }}"
+        
+    - name: Test the exact query Postfix uses
+      ansible.builtin.command:
+        cmd: docker exec mailserver-postgres psql -U postgres -d mailserver -c "SELECT 1 FROM virtual_domains WHERE name='testdomain.local' AND enabled=true;"
+      register: postfix_query
+      changed_when: false
+      
+    - name: Display Postfix query result
+      ansible.builtin.debug:
+        msg: "{{ postfix_query.stdout_lines }}"

@@ -1,0 +1,288 @@
+---
+# Reusable Playbook: Install and Configure OpenDKIM
+# 
+# Purpose: Deploy OpenDKIM for email signing and authentication
+# Can be included by task wrappers or run standalone
+
+- name: Install OpenDKIM and dependencies
+  ansible.builtin.apt:
+    name:
+      - opendkim
+      - opendkim-tools
+    state: present
+    update_cache: yes
+
+- name: Stop OpenDKIM for configuration
+  ansible.builtin.systemd:
+    name: opendkim
+    state: stopped
+
+- name: Create OpenDKIM directories
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    owner: opendkim
+    group: opendkim
+    mode: '0750'
+  loop:
+    - /etc/opendkim
+    - /etc/opendkim/keys
+    - /run/opendkim
+
+- name: Configure opendkim.conf
+  ansible.builtin.copy:
+    dest: /etc/opendkim.conf
+    content: |
+      # OpenDKIM Configuration
+      Syslog                  yes
+      SyslogSuccess           yes
+      LogWhy                  yes
+      
+      # Socket for Postfix
+      Socket                  {{ opendkim_socket }}
+      
+      # User and group
+      UserID                  opendkim:opendkim
+      
+      # Canonicalization
+      Canonicalization        relaxed/simple
+      
+      # Mode (sign and verify)
+      Mode                    sv
+      
+      # Subdomains
+      SubDomains              no
+      
+      # Signing domains
+      KeyTable                /etc/opendkim/KeyTable
+      SigningTable            /etc/opendkim/SigningTable
+      ExternalIgnoreList      /etc/opendkim/TrustedHosts
+      InternalHosts           /etc/opendkim/TrustedHosts
+    mode: '0644'
+    owner: root
+    group: root
+
+- name: Create TrustedHosts file
+  ansible.builtin.copy:
+    dest: /etc/opendkim/TrustedHosts
+    content: |
+      127.0.0.1
+      localhost
+      {{ mail_server_vpn_network }}
+      {{ mail_server_hostname }}
+    mode: '0644'
+    owner: opendkim
+    group: opendkim
+
+- name: Create KeyTable file
+  ansible.builtin.copy:
+    dest: /etc/opendkim/KeyTable
+    content: |
+      # Domain                 Selector    Key File
+      {{ mail_test_domain }}   {{ dkim_selector }}        /etc/opendkim/keys/{{ mail_test_domain }}/{{ dkim_selector }}.private
+    mode: '0644'
+    owner: opendkim
+    group: opendkim
+
+- name: Create SigningTable file
+  ansible.builtin.copy:
+    dest: /etc/opendkim/SigningTable
+    content: |
+      # Pattern                          Domain
+      *@{{ mail_test_domain }}           {{ mail_test_domain }}
+    mode: '0644'
+    owner: opendkim
+    group: opendkim
+
+- name: Create directory for test domain keys
+  ansible.builtin.file:
+    path: /etc/opendkim/keys/{{ mail_test_domain }}
+    state: directory
+    owner: opendkim
+    group: opendkim
+    mode: '0750'
+
+- name: Generate DKIM key for test domain
+  ansible.builtin.command:
+    cmd: opendkim-genkey -s {{ dkim_selector }} -d {{ mail_test_domain }}
+    chdir: /etc/opendkim/keys/{{ mail_test_domain }}
+    creates: /etc/opendkim/keys/{{ mail_test_domain }}/{{ dkim_selector }}.private
+
+- name: Set ownership of DKIM keys
+  ansible.builtin.file:
+    path: "{{ item }}"
+    owner: opendkim
+    group: opendkim
+    mode: '0600'
+  loop:
+    - /etc/opendkim/keys/{{ mail_test_domain }}/{{ dkim_selector }}.private
+    - /etc/opendkim/keys/{{ mail_test_domain }}/{{ dkim_selector }}.txt
+
+- name: Configure Postfix to use OpenDKIM
+  ansible.builtin.blockinfile:
+    path: /etc/postfix/main.cf
+    marker: "# {mark} ANSIBLE MANAGED - OpenDKIM Integration"
+    block: |
+      # OpenDKIM milter
+      milter_default_action = accept
+      milter_protocol = 6
+      smtpd_milters = inet:localhost:8891
+      non_smtpd_milters = inet:localhost:8891
+    state: present
+
+- name: Test OpenDKIM configuration
+  ansible.builtin.command:
+    cmd: opendkim -n
+  register: opendkim_test
+  changed_when: false
+  failed_when: false
+
+- name: Display OpenDKIM configuration test
+  ansible.builtin.debug:
+    msg: "{{ opendkim_test.stderr_lines if opendkim_test.stderr else 'Configuration OK' }}"
+
+- name: Start and enable OpenDKIM
+  ansible.builtin.systemd:
+    name: opendkim
+    state: started
+    enabled: yes
+  register: opendkim_start
+  failed_when: false
+
+- name: Check OpenDKIM logs if failed
+  ansible.builtin.command:
+    cmd: journalctl -u opendkim -n 30 --no-pager
+  register: opendkim_logs
+  when: opendkim_start.failed is defined and opendkim_start.failed
+  changed_when: false
+
+- name: Display OpenDKIM logs
+  ansible.builtin.debug:
+    msg: "{{ opendkim_logs.stdout_lines }}"
+  when: opendkim_start.failed is defined and opendkim_start.failed
+
+- name: Fail if OpenDKIM did not start
+  ansible.builtin.fail:
+    msg: "OpenDKIM failed to start. Check logs above."
+  when: opendkim_start.failed is defined and opendkim_start.failed
+
+- name: Restart Postfix to apply OpenDKIM integration
+  ansible.builtin.systemd:
+    name: postfix
+    state: restarted
+
+- name: Read DKIM public key for DNS
+  ansible.builtin.slurp:
+    src: /etc/opendkim/keys/{{ mail_test_domain }}/{{ dkim_selector }}.txt
+  register: dkim_public_key
+
+- name: Parse DKIM DNS record
+  ansible.builtin.set_fact:
+    dkim_dns_record: "{{ dkim_public_key.content | b64decode }}"
+
+- name: Create DNS records documentation
+  ansible.builtin.copy:
+    dest: /root/dns_records.txt
+    content: |
+      ==========================================
+      DNS Records for Mail Server Configuration
+      ==========================================
+      
+      Server: {{ mail_server_hostname }}
+      Public IP: {{ mail_server_public_ip }}
+      Test Domain: {{ mail_test_domain }}
+      
+      IMPORTANT: Add these records to your DNS provider
+      
+      1. SPF Record (TXT)
+      -------------------
+      Domain: {{ mail_test_domain }}
+      Type: TXT
+      Value: "v=spf1 ip4:{{ mail_server_public_ip }} -all"
+      
+      Explanation:
+      - v=spf1: SPF version 1
+      - ip4:{{ mail_server_public_ip }}: Authorize this IP to send mail
+      - -all: Reject all other servers (strict policy)
+      
+      
+      2. DKIM Record (TXT)
+      --------------------
+      {{ dkim_dns_record }}
+      
+      Explanation:
+      - This is a public key that receiving servers use to verify
+      - emails signed by your server are authentic
+      
+      
+      3. DMARC Record (TXT)
+      ---------------------
+      Domain: _dmarc.{{ mail_test_domain }}
+      Type: TXT
+      Value: "v=DMARC1; p=quarantine; rua=mailto:postmaster@{{ mail_test_domain }}; pct=100; adkim=s; aspf=s"
+      
+      Explanation:
+      - v=DMARC1: DMARC version 1
+      - p=quarantine: Put suspicious emails in spam folder
+      - rua=mailto:...: Send aggregate reports here
+      - pct=100: Apply policy to 100% of emails
+      - adkim=s: Strict DKIM alignment
+      - aspf=s: Strict SPF alignment
+      
+      
+      4. MX Record
+      ------------
+      Domain: {{ mail_test_domain }}
+      Type: MX
+      Priority: 10
+      Value: {{ mail_server_hostname }}
+      
+      
+      5. PTR Record (Reverse DNS)
+      ---------------------------
+      IP: {{ mail_server_public_ip }}
+      Points to: {{ mail_server_hostname }}
+      
+      Note: This must be configured through your VPS provider (Vultr)
+      
+      
+      ==========================================
+      Testing Your Configuration
+      ==========================================
+      
+      After adding DNS records, test with:
+      
+      1. SPF: https://mxtoolbox.com/spf.aspx
+      2. DKIM: Send test email to check-auth@verifier.port25.com
+      3. DMARC: https://mxtoolbox.com/dmarc.aspx
+      4. Overall: https://www.mail-tester.com/
+      
+      ==========================================
+    mode: '0644'
+    owner: root
+    group: root
+
+- name: Display completion summary
+  ansible.builtin.debug:
+    msg:
+      - "=========================================="
+      - "OpenDKIM Installation Complete"
+      - "=========================================="
+      - ""
+      - "✓ OpenDKIM installed and configured"
+      - "✓ DKIM keys generated for {{ mail_test_domain }}"
+      - "✓ Postfix integrated with OpenDKIM"
+      - "✓ DNS records documented"
+      - ""
+      - "IMPORTANT - DNS Configuration Required:"
+      - "DNS records saved to: /root/dns_records.txt"
+      - ""
+      - "View DNS records:"
+      - "  sudo cat /root/dns_records.txt"
+      - ""
+      - "Test commands:"
+      - "  sudo systemctl status opendkim"
+      - "  sudo opendkim-testkey -d {{ mail_test_domain }} -s {{ dkim_selector }} -vvv"
+      - ""
+      - "Next: Add DNS records to your DNS provider"
+      - "=========================================="

@@ -1,0 +1,24 @@
+---
+- name: Debug line 122
+  hosts: all
+  become: yes
+  tasks:
+    - name: Show lines 115-130
+      ansible.builtin.command:
+        cmd: sed -n '115,130p' /etc/dovecot/conf.d/10-auth.conf
+      register: lines
+      changed_when: false
+      
+    - name: Display with line numbers
+      ansible.builtin.debug:
+        msg: "{{ lines.stdout_lines }}"
+        
+    - name: Show exact characters on line 122
+      ansible.builtin.shell:
+        cmd: sed -n '122p' /etc/dovecot/conf.d/10-auth.conf | cat -A
+      register: line122
+      changed_when: false
+      
+    - name: Display hex
+      ansible.builtin.debug:
+        msg: "Line 122: {{ line122.stdout }}"

@@ -1,0 +1,14 @@
+---
+- name: Check SQL config
+  hosts: all
+  become: yes
+  tasks:
+    - name: Read dovecot-sql.conf.ext
+      ansible.builtin.command:
+        cmd: cat /etc/dovecot/dovecot-sql.conf.ext
+      register: sql
+      changed_when: false
+      
+    - name: Display
+      ansible.builtin.debug:
+        msg: "{{ sql.stdout_lines }}"

@@ -1,0 +1,15 @@
+---
+- name: Check error
+  hosts: all
+  become: yes
+  tasks:
+    - name: Test config
+      ansible.builtin.command:
+        cmd: doveconf -n
+      register: test
+      changed_when: false
+      failed_when: false
+      
+    - name: Display
+      ansible.builtin.debug:
+        msg: "{{ test.stderr_lines if test.rc != 0 else 'Config OK' }}"

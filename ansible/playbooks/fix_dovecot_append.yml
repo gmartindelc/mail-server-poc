@@ -1,0 +1,70 @@
+---
+- name: Fix Dovecot SQL auth - direct append
+  hosts: all
+  become: yes
+  tasks:
+    - name: Remove any SQL auth blocks (clean slate)
+      ansible.builtin.shell:
+        cmd: |
+          sed -i '/# BEGIN ANSIBLE MANAGED/,/# END ANSIBLE MANAGED/d' /etc/dovecot/conf.d/10-auth.conf
+          sed -i '/# SQL Authentication/d' /etc/dovecot/conf.d/10-auth.conf
+          sed -i '/^passdb {$/,/^}$/d' /etc/dovecot/conf.d/10-auth.conf
+          sed -i '/^userdb {$/,/^}$/d' /etc/dovecot/conf.d/10-auth.conf
+      changed_when: true
+      
+    - name: Append SQL auth config directly
+      ansible.builtin.shell:
+        cmd: |
+          cat >> /etc/dovecot/conf.d/10-auth.conf << 'EOF'
+          
+          # SQL Authentication (PostgreSQL)
+          passdb {
+            driver = sql
+            args = /etc/dovecot/dovecot-sql.conf.ext
+          }
+          
+          userdb {
+            driver = sql
+            args = /etc/dovecot/dovecot-sql.conf.ext
+          }
+          EOF
+      changed_when: true
+      
+    - name: Verify the config was added
+      ansible.builtin.command:
+        cmd: tail -15 /etc/dovecot/conf.d/10-auth.conf
+      register: tail_check
+      changed_when: false
+      
+    - name: Display what was added
+      ansible.builtin.debug:
+        msg: "{{ tail_check.stdout_lines }}"
+        
+    - name: Test config
+      ansible.builtin.command:
+        cmd: doveconf -n
+      register: test
+      changed_when: false
+      failed_when: false
+      
+    - name: Display result
+      ansible.builtin.debug:
+        msg: "{{ 'Config OK!' if test.rc == 0 else test.stderr_lines }}"
+        
+    - name: Restart Dovecot if config OK
+      ansible.builtin.systemd:
+        name: dovecot
+        state: restarted
+      when: test.rc == 0
+      
+    - name: Check logs after restart
+      ansible.builtin.command:
+        cmd: journalctl -u dovecot --since "5 seconds ago" --no-pager
+      register: logs
+      changed_when: false
+      when: test.rc == 0
+      
+    - name: Display logs
+      ansible.builtin.debug:
+        msg: "{{ logs.stdout_lines }}"
+      when: test.rc == 0

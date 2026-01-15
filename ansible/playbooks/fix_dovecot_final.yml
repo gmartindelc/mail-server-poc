@@ -1,0 +1,90 @@
+---
+- name: Fix Dovecot SQL auth with correct syntax
+  hosts: all
+  become: yes
+  tasks:
+    - name: Remove any existing SQL auth blocks
+      ansible.builtin.shell:
+        cmd: |
+          sed -i '/^passdb {/,/^}/d' /etc/dovecot/conf.d/10-auth.conf
+          sed -i '/^userdb {/,/^}/d' /etc/dovecot/conf.d/10-auth.conf
+          sed -i '/# ANSIBLE MANAGED/,/# END ANSIBLE MANAGED/d' /etc/dovecot/conf.d/10-auth.conf
+      changed_when: true
+      
+    - name: Create proper auth-sql.conf.ext file
+      ansible.builtin.copy:
+        dest: /etc/dovecot/conf.d/auth-sql.conf.ext
+        content: |
+          # SQL Authentication (PostgreSQL)
+          passdb {
+            driver = sql
+            args = /etc/dovecot/dovecot-sql.conf.ext
+          }
+          
+          userdb {
+            driver = sql
+            args = /etc/dovecot/dovecot-sql.conf.ext
+          }
+        mode: '0644'
+        owner: root
+        group: root
+        
+    - name: Enable SQL auth include in 10-auth.conf
+      ansible.builtin.replace:
+        path: /etc/dovecot/conf.d/10-auth.conf
+        regexp: '^#?(!include auth-sql.conf.ext)'
+        replace: '!include auth-sql.conf.ext'
+        
+    - name: Disable system auth include
+      ansible.builtin.replace:
+        path: /etc/dovecot/conf.d/10-auth.conf
+        regexp: '^(!include auth-system.conf.ext)'
+        replace: '#\1'
+        
+    - name: Test configuration syntax
+      ansible.builtin.command:
+        cmd: doveconf -n
+      register: test
+      changed_when: false
+      failed_when: test.rc != 0
+      
+    - name: Display configuration test result
+      ansible.builtin.debug:
+        msg: "{{ 'Configuration syntax OK' if test.rc == 0 else 'Configuration has errors' }}"
+        
+    - name: Show passdb/userdb config
+      ansible.builtin.command:
+        cmd: doveconf -n | grep -A10 -B2 "passdb\|userdb"
+      register: auth_conf
+      changed_when: false
+      failed_when: false
+      
+    - name: Display auth config
+      ansible.builtin.debug:
+        msg: "{{ auth_conf.stdout_lines }}"
+        
+    - name: Restart Dovecot
+      ansible.builtin.systemd:
+        name: dovecot
+        state: restarted
+        
+    - name: Check Dovecot status
+      ansible.builtin.systemd:
+        name: dovecot
+        state: started
+        
+    - name: Create test summary
+      ansible.builtin.debug:
+        msg:
+          - "=========================================="
+          - "Dovecot SQL Auth Configuration Complete"
+          - "=========================================="
+          - ""
+          - "✓ auth-sql.conf.ext created with proper syntax"
+          - "✓ SQL auth include enabled in 10-auth.conf"
+          - "✓ System auth disabled"
+          - "✓ Service restarted"
+          - ""
+          - "To test: doveadm auth test testuser1@testdomain.local TestPass123!"
+          - "=========================================="
+          

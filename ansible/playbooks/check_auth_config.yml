@@ -1,0 +1,36 @@
+---
+- name: Check auth config
+  hosts: all
+  become: yes
+  tasks:
+    - name: Read auth-sql.conf.ext
+      ansible.builtin.command:
+        cmd: cat /etc/dovecot/conf.d/auth-sql.conf.ext
+      register: auth_file
+      changed_when: false
+      
+    - name: Display
+      ansible.builtin.debug:
+        msg: "{{ auth_file.stdout_lines }}"
+        
+    - name: Check if it's included
+      ansible.builtin.command:
+        cmd: grep "include auth-sql" /etc/dovecot/conf.d/10-auth.conf
+      register: include_check
+      changed_when: false
+      failed_when: false
+      
+    - name: Display include
+      ansible.builtin.debug:
+        msg: "{{ include_check.stdout_lines }}"
+        
+    - name: Run doveconf to see actual config
+      ansible.builtin.command:
+        cmd: doveconf -n auth
+      register: doveconf_out
+      changed_when: false
+      failed_when: false
+      
+    - name: Display doveconf
+      ansible.builtin.debug:
+        msg: "{{ doveconf_out.stdout_lines if doveconf_out.rc == 0 else doveconf_out.stderr_lines }}"

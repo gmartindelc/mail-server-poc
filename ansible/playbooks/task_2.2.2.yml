@@ -1,0 +1,25 @@
+---
+# Task 2.2.2: Install and Configure Dovecot IMAP
+# 
+# Purpose: Deploy Dovecot for IMAP access with PostgreSQL authentication
+# - Install Dovecot IMAP server
+# - Configure PostgreSQL authentication
+# - Set up Maildir format
+# - Configure LMTP for Postfix integration
+# - Enable SSL/TLS
+#
+# Usage: ansible-playbook playbooks/task_2.2.2.yml
+
+- name: Task 2.2.2 - Install and Configure Dovecot IMAP
+  hosts: all
+  become: yes
+  gather_facts: yes
+  
+  tasks:
+    - name: Include Dovecot installation playbook
+      ansible.builtin.include_tasks:
+        file: install_dovecot.yml
+      tags:
+        - dovecot
+        - imap
+        - mail

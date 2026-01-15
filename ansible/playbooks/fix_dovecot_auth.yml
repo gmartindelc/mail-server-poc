@@ -1,0 +1,48 @@
+---
+- name: Manual Dovecot auth fix
+  hosts: all
+  become: yes
+  tasks:
+    - name: Restore original auth-sql.conf.ext from package
+      ansible.builtin.command:
+        cmd: cp /usr/share/dovecot/conf.d/auth-sql.conf.ext /etc/dovecot/conf.d/auth-sql.conf.ext
+      changed_when: true
+      
+    - name: Uncomment passdb driver line with correct indentation
+      ansible.builtin.replace:
+        path: /etc/dovecot/conf.d/auth-sql.conf.ext
+        regexp: '^\s*#\s*driver = sql'
+        replace: '  driver = sql'
+        
+    - name: Uncomment passdb args line with correct indentation
+      ansible.builtin.replace:
+        path: /etc/dovecot/conf.d/auth-sql.conf.ext
+        regexp: '^\s*#\s*args = /etc/dovecot/dovecot-sql.conf.ext'
+        replace: '  args = /etc/dovecot/dovecot-sql.conf.ext'
+        
+    - name: Enable auth-sql.conf.ext in 10-auth.conf
+      ansible.builtin.replace:
+        path: /etc/dovecot/conf.d/10-auth.conf
+        regexp: '^#!include auth-sql.conf.ext'
+        replace: '!include auth-sql.conf.ext'
+        
+    - name: Remove ANSIBLE MANAGED blocks from 10-auth.conf
+      ansible.builtin.shell:
+        cmd: sed -i '/# BEGIN ANSIBLE MANAGED/,/# END ANSIBLE MANAGED/d' /etc/dovecot/conf.d/10-auth.conf
+      changed_when: true
+      
+    - name: Test config
+      ansible.builtin.command:
+        cmd: doveconf -n
+      register: test
+      changed_when: false
+      
+    - name: Show result
+      ansible.builtin.debug:
+        msg: "{{ 'SUCCESS' if test.rc == 0 else test.stderr }}"
+        
+    - name: Restart Dovecot
+      ansible.builtin.systemd:
+        name: dovecot
+        state: restarted
+      when: test.rc == 0

@@ -1,0 +1,14 @@
+---
+- name: Check working auth files
+  hosts: all
+  become: yes
+  tasks:
+    - name: Check auth-system.conf.ext
+      ansible.builtin.command:
+        cmd: head -50 /etc/dovecot/conf.d/auth-system.conf.ext
+      register: sys
+      changed_when: false
+      
+    - name: Display
+      ansible.builtin.debug:
+        msg: "{{ sys.stdout_lines }}"

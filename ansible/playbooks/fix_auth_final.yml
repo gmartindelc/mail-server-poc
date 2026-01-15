@@ -1,0 +1,41 @@
+---
+- name: Fix auth-sql.conf.ext properly
+  hosts: all
+  become: yes
+  tasks:
+    - name: Create working auth-sql.conf.ext
+      ansible.builtin.copy:
+        dest: /etc/dovecot/conf.d/auth-sql.conf.ext
+        content: |
+          # SQL authentication configuration
+          passdb {
+            driver = sql
+            args = /etc/dovecot/dovecot-sql.conf.ext
+          }
+          
+          userdb {
+            driver = sql  
+            args = /etc/dovecot/dovecot-sql.conf.ext
+          }
+        mode: '0644'
+        owner: root
+        group: root
+        
+    - name: Restart Dovecot
+      ansible.builtin.systemd:
+        name: dovecot
+        state: restarted
+        
+    - name: Wait for startup
+      ansible.builtin.pause:
+        seconds: 3
+        
+    - name: Check logs
+      ansible.builtin.command:
+        cmd: journalctl -u dovecot -n 10 --no-pager
+      register: logs
+      changed_when: false
+      
+    - name: Display
+      ansible.builtin.debug:
+        msg: "{{ logs.stdout_lines }}"
