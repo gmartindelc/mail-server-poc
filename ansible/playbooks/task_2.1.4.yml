@@ -1,24 +1,20 @@
----
-# Task 2.1.4: Final PostgreSQL Database Verification
+# Task 2.1.4: PostgreSQL Database Verification
 # 
-# Purpose: Comprehensive verification of PostgreSQL database layer
-# - Test all service user connections
-# - Verify backup and restore procedures
-# - Validate database schema integrity
-# - Test authentication functions
-# - Document connection strings
-#
-# Usage: ansible-playbook playbooks/task_2.1.4.yml
+# Purpose: Verify database schema and service users created by Task 2.1.2
+# Uses reusable verification playbook
 
-- name: Task 2.1.4 - Final PostgreSQL Database Verification
+- name: Task 2.1.4 - PostgreSQL Database Verification
   hosts: all
   become: yes
   gather_facts: yes
   
+  vars_files:
+    - ../group_vars/all.yml
+  
   tasks:
     - name: Include PostgreSQL verification playbook
       ansible.builtin.include_tasks:
-        file: verify_postgresql_complete.yml
+        file: verify_postgresql_setup.yml
       tags:
         - verification
         - database

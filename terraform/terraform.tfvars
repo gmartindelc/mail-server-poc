@@ -6,15 +6,15 @@ ssh_key_name = "LC02 Vultr"
 
 # VPS Configuration
 plan_id   = "vc2-2c-4gb" # 2 vCPU, 4GB RAM
-region_id = "dfw"        # New Jersey
-os_id     = 2625         # Ubuntu 24.04 LTS
+region_id = "dfw"        # Dallas
+os_id     = 2625         # Debian 13 x64
 
 # Server Details
 hostname = "cucho1.phalkons.com"
 label    = "cucho1.phalkons.com"
 
 # Tags (optional)
-tags = ["production", "mail-server", "terraform"]
+tags = ["poc", "mail-server", "terraform"]
 
 # Backups Configuration
 enable_backups = true

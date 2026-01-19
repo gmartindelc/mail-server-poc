@@ -1,402 +1,207 @@
-# Vultr VPS Terraform Configuration
+# Terraform — Vultr VPS for Mail Server PoC
 
-This Terraform configuration creates a Vultr VPS instance with parameterized settings including plan type, hostname, region, OS, labels, and tags.
+Purpose
+- Provision a Vultr VPS (Debian/Ubuntu/etc.) for the Mail Server PoC with parameterized plans/regions/OS and secure credential handling.
+- Provide wrapper scripts for initialization, deployment, and output/credential extraction.
 
-## Features
+Contents
+- Terraform config (provider, variables, resources, outputs)
+- Helper scripts: initialization, deployment (minimal/enhanced), outputs/credentials saving
+- Resource documentation generators for Vultr plans/regions/OS
 
-- ✅ Parameterized VPS creation using Vultr plan/region/OS codes
-- ✅ Automatic backups enabled
-- ✅ SSH key integration (uses existing key)
-- ✅ Outputs IP address and root password
-- ✅ Saves outputs in JSON format for HashiCorp Vault
-- ✅ Secure credential management via .env file
-- 🔄 Automated scripts to update documentation with latest Vultr resources
-- 🔜 Support for multiple instance creation (prepared for future use)
-
-## Prerequisites
-
-1. **Vultr Account**: Sign up at [vultr.com](https://www.vultr.com)
-2. **Vultr API Key**: Generate from [Vultr API Settings](https://my.vultr.com/settings/#settingsapi)
-3. **SSH Key**: Already uploaded to your Vultr account
-4. **Terraform**: Install from [terraform.io](https://www.terraform.io/downloads)
-
-## File Structure
-
+Directory Structure
 ```
-.
-├── main.tf                    # Main VPS resource configuration
-├── provider.tf                # Vultr provider configuration
-├── variables.tf               # Variable definitions
-├── outputs.tf                 # Output definitions
-├── terraform.tfvars.example   # Example variables file
-├── .env.example              # Example environment variables
-├── save_outputs.sh           # Script to save outputs for Vault
-├── .gitignore                # Git ignore rules
-├── PLAN_IDS.md               # Reference: Vultr plan IDs
-├── REGION_CODES.md           # Reference: Vultr region codes
-├── OS_IDS.md                 # Reference: Vultr OS IDs
-├── scripts/                  # Utility scripts for documentation
-│   ├── vultr_resource_retriever.py    # Fetch latest Vultr resources
-│   ├── vultr_resource_retriever.sh    # Bash version of retriever
-│   ├── update_vultr_docs.py           # Update markdown docs from CSV
-│   ├── update_vultr_docs.sh           # Bash version of updater
-│   └── examples.py                     # Usage examples
-└── README.md                 # This file
-```
-
-## Setup Instructions
-
-### 1. Clone or Download Files
-
-Download all files to your project directory.
-
-### 2. Configure Environment Variables
-
-Copy the example .env file and add your Vultr API key:
-
-```bash
-cp .env.example .env
-nano .env  # or use your preferred editor
+terraform/
+├── main.tf                         # Instance resource
+├── provider.tf                     # Vultr provider config
+├── variables.tf                    # Core variable definitions
+├── variables_backup_schedule.tf    # Optional backup scheduling variables
+├── outputs.tf                      # Outputs (incl. Vault JSON)
+├── terraform.tfvars-example        # Example variable values
+├── terraform.tfvars.example-with-backups
+├── terraform.tfvars                # Your values (create this)
+├── init.sh                         # Minimal init script
+├── deploy.sh                       # Minimal deploy script
+├── deploy_enhanced.sh              # Enhanced deploy with credential extraction
+├── save_outputs.sh                 # Save outputs to JSON (Vault)
+├── save_outputs_simple.sh          # Simple outputs saver
+├── save_credentials.sh             # Secure credentials file writer
+├── test_save_outputs.sh            # Test harness for outputs scripts
+├── README.md                       # This file
+├── README_UPDATE_SUMMARY.md        # Notes about README updates
+├── SECURE_CREDENTIAL_HANDLING.md   # Security behavior for credentials
+├── VULTR_PROVIDER_V2_CHANGES.md    # Provider migration notes
+├── TERRAFORM_OUTPUTS_TESTING.md    # Outputs testing notes
+├── CREDENTIAL_EXTRACTION.md        # Credential extraction guide
+├── BACKUP_OPTIONS.md               # Backup scheduling options
+├── PLAN_IDS.md                     # Vultr plan reference (generated)
+├── REGION_CODES.md                 # Vultr regions reference (generated)
+├── OS_IDS.md                       # Vultr OS reference (generated)
+├── scripts/                        # Doc-update utilities
+│   ├── vultr_resource_retriever.py
+│   ├── vultr_resource_retriever.sh
+│   ├── update_vultr_docs.py
+│   ├── update_vultr_docs.sh
+│   └── examples.py
+└── (state files) terraform.tfstate, terraform.tfstate.backup
 ```
 
-Edit `.env` and replace with your actual API key:
-```bash
-export TF_VAR_vultr_api_key="YOUR_ACTUAL_API_KEY_HERE"
+Prerequisites
+- Vultr account + API key with permissions
+- Terraform >= 1.0
+- SSH key already uploaded to your Vultr account (referenced by name)
+- Bash + coreutils; Python 3 if using doc update scripts
+
+Environment and Variables
+1) Environment (.env in repo root)
+- Create ../.env (copy .env-example at repo root if present) and set:
 ```
-
-### 3. Configure Terraform Variables
-
-Copy the example tfvars file:
-
-```bash
-cp terraform.tfvars.example terraform.tfvars
-nano terraform.tfvars  # or use your preferred editor
+export TF_VAR_vultr_api_key="YOUR_VULTR_API_KEY"
 ```
+- Load before running: `source ../.env`
 
-Edit `terraform.tfvars` with your desired configuration:
-
-```hcl
-ssh_key_name = "my-existing-key"  # Name of your SSH key in Vultr
-plan_id      = "vc2-2c-4gb"       # 2 vCPU, 4GB RAM
-region_id    = "ewr"               # New Jersey
-os_id        = 1743                # Ubuntu 24.04 LTS
-
-hostname     = "production-web-01"
-label        = "Production Web Server"
-tags         = ["production", "web", "terraform"]
-
+2) Terraform variables (terraform.tfvars)
+- Copy example and adjust:
+```
+cp terraform.tfvars-example terraform.tfvars
+```
+- Edit terraform.tfvars (example):
+```
+ssh_key_name   = "My Vultr Key"
+plan_id        = "vc2-2c-4gb"
+region_id      = "ewr"
+os_id          = 1743  # Ubuntu 24.04 LTS (see OS_IDS.md)
+hostname       = "mailserver-poc-01"
+label          = "Mail Server PoC"
+tags           = ["mail", "poc", "terraform"]
 enable_backups = true
 ```
+- Reference files for IDs: PLAN_IDS.md, REGION_CODES.md, OS_IDS.md
 
-**Reference Files for IDs:**
-- See `PLAN_IDS.md` for available plan codes
-- See `REGION_CODES.md` for region codes
-- See `OS_IDS.md` for operating system IDs
-
-### 4. Load Environment Variables
-
-```bash
-source .env
-# or
-export $(cat .env | xargs)
+Quick Start
+Option A — Wrapper scripts
+- Initialize (optional safe checks):
 ```
+cd terraform
+./init.sh
+```
+- Deploy (minimal):
+```
+./deploy.sh
+```
+- Deploy (enhanced with credential extraction and summary):
+```
+./deploy_enhanced.sh
+```
+Notes:
+- Scripts validate presence of main.tf, terraform.tfvars, and ../.env
+- Enhanced script loads TF_VAR_vultr_api_key and writes a secure credentials file in the repo root named "<hostname>.secret" with format: `ip,password` (0600 perms)
 
-### 5. Initialize Terraform
-
-```bash
+Option B — Raw Terraform
+```
+cd terraform
+source ../.env
 terraform init
+terraform plan -var-file="terraform.tfvars"
+terraform apply -var-file="terraform.tfvars"
 ```
 
-### 6. Review the Plan
-
-```bash
-terraform plan
+Outputs and Credentials
+- Show all outputs:
 ```
-
-### 7. Apply Configuration
-
-```bash
-terraform apply
-```
-
-Type `yes` when prompted to create the resources.
-
-## Viewing Outputs
-
-### Display All Outputs
-
-```bash
 terraform output
 ```
-
-### Display Specific Output
-
-```bash
-# Show IP address
-terraform output main_ip
-
-# Show root password (sensitive)
-terraform output default_password
+- Show specific outputs:
 ```
-
-### Save Outputs for HashiCorp Vault
-
-The configuration includes a special output formatted for Vault:
-
-```bash
-# Save to JSON file
-./save_outputs.sh my_instance.json
-
-# Or manually
+terraform output -raw main_ip
+terraform output -raw default_password   # sensitive
+```
+- Save outputs (Vault JSON):
+```
+./save_outputs.sh secrets.json
+# or
 terraform output -raw vault_secret_json > secrets.json
 ```
-
-### Upload to HashiCorp Vault
-
-```bash
-# Using the JSON file
-vault kv put secret/vultr/instances/my-instance @secrets.json
-
-# Or manually specify each field
-vault kv put secret/vultr/instances/my-instance \
-  instance_id=$(terraform output -raw instance_id) \
-  main_ip=$(terraform output -raw main_ip) \
-  default_password=$(terraform output -raw default_password) \
-  hostname=$(terraform output -raw instance_label)
+- Secure credential handling (recommended workflow):
+  - After enhanced deploy, credentials are stored in ../<hostname>.secret
+  - File format: `ip,password` — permissions 600
+  - Connect via:
 ```
-
-## Connecting to Your VPS
-
-Once created, connect via SSH:
-
-```bash
-ssh root@$(terraform output -raw main_ip)
+ssh root@$(cut -d',' -f1 ../<hostname>.secret)
 ```
+  - See SECURE_CREDENTIAL_HANDLING.md for details and safe patterns
 
-Or use the password if needed:
-
-```bash
-# Display password
-terraform output default_password
+Resource Documentation Updates (Plans/Regions/OS)
+- Retrieve latest Vultr resources and update markdown references:
 ```
-
-## Managing Multiple Instances (Future)
-
-The configuration is prepared for multiple instance creation. To enable:
-
-1. Uncomment the `count` parameter in `main.tf`
-2. Set `instance_count` in your `terraform.tfvars`
-3. Adjust outputs to handle multiple instances
-
-## Common Plan Configurations
-
-| Plan ID | vCPU | RAM | Storage | Bandwidth |
-|---------|------|-----|---------|-----------|
-| vc2-1c-1gb | 1 | 1GB | 25GB SSD | 1TB |
-| vc2-2c-4gb | 2 | 4GB | 80GB SSD | 3TB |
-| vc2-4c-8gb | 4 | 8GB | 160GB SSD | 4TB |
-| vhf-2c-4gb | 2 | 4GB | 128GB NVMe | 3TB |
-
-See `PLAN_IDS.md` for complete list.
-
-## Popular Regions
-
-| Code | Location |
-|------|----------|
-| ewr | New Jersey (NY Metro) |
-| lax | Los Angeles |
-| sjc | Silicon Valley |
-| fra | Frankfurt |
-| lhr | London |
-| sgp | Singapore |
-| syd | Sydney |
-
-See `REGION_CODES.md` for complete list.
-
-## Common Operating Systems
-
-| OS ID | Operating System |
-|-------|-----------------|
-| 1743 | Ubuntu 24.04 LTS |
-| 387 | Ubuntu 22.04 LTS |
-| 2340 | Debian 12 |
-| 1869 | Rocky Linux 9 |
-| 2275 | Windows Server 2022 |
-
-See `OS_IDS.md` for complete list.
-
-## Scripts Folder
-
-The `scripts/` directory contains utility scripts for maintaining and updating the Vultr resource documentation.
-
-### 📥 Resource Retrieval Scripts
-
-**Purpose:** Fetch the latest available plans, regions, and OS IDs from Vultr API
-
-```bash
-# Python version (recommended)
-cd scripts
+cd terraform/scripts
 python3 vultr_resource_retriever.py
-
-# Bash version
-./vultr_resource_retriever.sh
-```
-
-**Output:** Creates timestamped CSV files with current Vultr resources:
-- `vultr_plans_YYYYMMDD_HHMMSS.csv`
-- `vultr_regions_YYYYMMDD_HHMMSS.csv`
-- `vultr_os_YYYYMMDD_HHMMSS.csv`
-
-### 📝 Documentation Update Scripts
-
-**Purpose:** Generate/update the markdown documentation files from CSV data
-
-```bash
-# Python version (recommended) - deletes CSV files after processing
-python3 update_vultr_docs.py
-
-# Keep CSV files for reference
-python3 update_vultr_docs.py --keep-csv
-
-# Bash version
-./update_vultr_docs.sh
-```
-
-**Output:** Updates documentation files:
-- `PLAN_IDS.md` - All available server plans and pricing
-- `REGION_CODES.md` - All data center locations
-- `OS_IDS.md` - All operating system options
-
-**Note:** By default, CSV files are automatically deleted after updating documentation. Use `--keep-csv` flag to preserve them.
-
-### 🔄 Complete Update Workflow
-
-To refresh all documentation with the latest Vultr resources:
-
-```bash
-# Method 1: Two-step process
-cd scripts
-python3 vultr_resource_retriever.py  # Fetch latest data
 cd ..
-python3 update_vultr_docs.py          # Update docs & cleanup CSVs
+python3 update_vultr_docs.py           # adds/updates PLAN_IDS.md, REGION_CODES.md, OS_IDS.md
+```
+- Bash equivalents are available (.sh)
+- See README_UPDATE_SUMMARY.md for context; scripts/QUICK_REFERENCE.md for cheatsheet
 
-# Method 2: One-line command
-cd scripts && python3 vultr_resource_retriever.py && cd .. && python3 update_vultr_docs.py
+Configuration Details
+- Provider (provider.tf): uses var.vultr_api_key, sets rate_limit/retry_limit
+- Instance (main.tf):
+  - Uses plan_id, region_id, os_id, label, hostname, tags
+  - Backups: `enable_backups = true` toggles backups; a weekly schedule block is configured (hour=5 UTC). See BACKUP_OPTIONS.md and variables_backup_schedule.tf for additional control if you extend the config.
+  - SSH key attachment resolved via `data "vultr_ssh_key"` by name (ssh_key_name)
+  - IPv6 disabled by default (enable_ipv6 variable available for extensions)
+- Variables (variables.tf): core inputs
+- Outputs (outputs.tf): instance details + `vault_secret_json` for secret stores
+
+Common Workflows
+- Display credentials file path and connect:
+```
+cat ../<hostname>.secret
+ssh root@$(cut -d',' -f1 ../<hostname>.secret)
+```
+- Save Vault secret:
+```
+terraform output -raw vault_secret_json > vault_secret.json
+# vault kv put secret/vultr/instances/<name> @vault_secret.json
+```
+- Destroy resources:
+```
+terraform destroy -var-file="terraform.tfvars"
 ```
 
-### 📚 Script Documentation
-
-For detailed documentation on the scripts:
-- See `scripts/README.md` - Resource retriever documentation
-- See `scripts/UPDATE_DOCS_README.md` - Documentation updater guide
-- See `scripts/QUICK_REFERENCE.md` - Quick reference cheat sheet
-
-### ⚙️ Requirements
-
-**Python scripts:**
-```bash
-pip install requests
+Troubleshooting
+- Provider v2.x breaking change — `enable_private_network` removed
+  - Use VPC resources instead if needed; see VULTR_PROVIDER_V2_CHANGES.md
+- API key not loaded
 ```
-
-**Bash scripts:**
-- `curl` (required)
-- `jq` (optional, for CSV conversion)
-
-### 💡 When to Update Documentation
-
-Update the documentation when:
-- ✅ Vultr launches new server plans
-- ✅ New regions become available
-- ✅ New OS images are added
-- ✅ Pricing changes
-- ✅ Monthly/quarterly maintenance schedule
-
-### 🤖 Automation Options
-
-**Cron job (weekly updates):**
-```bash
-# Add to crontab
-0 2 * * 0 cd /path/to/terraform && cd scripts && python3 vultr_resource_retriever.py && cd .. && python3 update_vultr_docs.py
-```
-
-**GitHub Actions:** See `scripts/UPDATE_DOCS_README.md` for CI/CD examples
-
-## Troubleshooting
-
-### Vultr Provider v2.x Changes
-
-**Error:** `unexpected attribute, enable_private_network is not expected here`
-
-**Fix:** The `enable_private_network` attribute was removed in provider v2.x. If you need private networking, use VPC resources instead. See `VULTR_PROVIDER_V2_CHANGES.md` for detailed migration guide.
-
-```hcl
-# ❌ Old way (v1.x) - no longer works
-enable_private_network = false
-
-# ✅ New way (v2.x) - use VPC if needed
-vpc_ids = [vultr_vpc.my_vpc.id]
-```
-
-### API Key Issues
-
-```bash
-# Verify API key is loaded
 echo $TF_VAR_vultr_api_key
-
-# Re-source the .env file
-source .env
+source ../.env
 ```
-
-### SSH Key Not Found
-
-```bash
-# List your SSH keys in Vultr
+- SSH key not found in Vultr
+```
+# Check via CLI
 vultr-cli ssh-key list
-
-# Or check via API
-curl -X GET "https://api.vultr.com/v2/ssh-keys" \
-  -H "Authorization: Bearer YOUR_API_KEY"
+# Or via API
+curl -s -H "Authorization: Bearer $TF_VAR_vultr_api_key" https://api.vultr.com/v2/ssh-keys
 ```
-
-### Region/Plan Not Available
-
-Some plans may not be available in all regions. Check availability:
-
-```bash
+- Plan/region availability
+```
 vultr-cli plans list --region ewr
 vultr-cli regions availability ewr
 ```
 
-## Cleaning Up
+Security Best Practices
+- Do not commit .env, terraform.tfvars, or any *.secret files
+- Secrets should be stored in a secret manager (Vault, etc.)
+- Rotate API keys periodically
+- Replace default root password immediately after first login
+- Prefer SSH key auth; disable password SSH once configured
 
-To destroy the created resources:
+Notes & Extensions
+- variables_backup_schedule.tf includes optional vars to refine backup schedules (type/hour/dow). The current main.tf includes a weekly schedule example; extend as needed.
+- TERRAFORM_OUTPUTS_TESTING.md and CREDENTIAL_EXTRACTION.md contain advanced usage/testing patterns.
 
-```bash
-terraform destroy
-```
-
-## Security Best Practices
-
-1. ✅ Never commit `.env` or `terraform.tfvars` to version control
-2. ✅ Use `.gitignore` (provided) to exclude sensitive files
-3. ✅ Store secrets in HashiCorp Vault or similar secret management
-4. ✅ Rotate API keys regularly
-5. ✅ Use strong SSH keys (Ed25519 or RSA 4096-bit)
-6. ✅ Change the default root password immediately after first login
-7. ✅ Consider using Vultr firewall rules for additional security
-
-## Additional Resources
-
-- [Vultr API Documentation](https://www.vultr.com/api/)
-- [Vultr Terraform Provider](https://registry.terraform.io/providers/vultr/vultr/latest/docs)
-- [Terraform Documentation](https://www.terraform.io/docs)
-- [HashiCorp Vault](https://www.vaultproject.io/)
-
-## License
-
-This configuration is provided as-is for use with Vultr infrastructure.
-
-## Support
-
-For Terraform provider issues: [Vultr Terraform Provider GitHub](https://github.com/vultr/terraform-provider-vultr)
-For Vultr platform issues: [Vultr Support](https://www.vultr.com/support/)
+Support & References
+- Vultr Terraform Provider: https://registry.terraform.io/providers/vultr/vultr/latest
+- Vultr API: https://www.vultr.com/api/
+- Terraform Docs: https://www.terraform.io/docs
+- HashiCorp Vault: https://www.vaultproject.io/

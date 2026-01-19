@@ -121,10 +121,15 @@
 
 - name: Create Dovecot database user and grant access
   ansible.builtin.shell: |
-    docker exec {{ postgres_config.container_name }} \
-      psql -U {{ postgres_config.admin_user }} -c \
-      "DO $$ BEGIN IF NOT EXISTS (SELECT FROM pg_catalog.pg_roles WHERE rolname = '{{ postgres_dovecot_user }}') THEN CREATE USER {{ postgres_dovecot_user }} WITH ENCRYPTED PASSWORD '{{ dovecot_password.stdout }}'; END IF; END $$;"
-
+    # Check if user exists, create if not
+    if ! docker exec {{ postgres_config.container_name }} \
+      psql -U {{ postgres_config.admin_user }} -t -c "SELECT 1 FROM pg_roles WHERE rolname='{{ postgres_dovecot_user }}';" | grep -q 1; then
+      docker exec {{ postgres_config.container_name }} \
+        psql -U {{ postgres_config.admin_user }} -c \
+        "CREATE USER {{ postgres_dovecot_user }} WITH ENCRYPTED PASSWORD '{{ dovecot_password.stdout }}';"
+    fi
+    
+    # Grant permissions
     docker exec {{ postgres_config.container_name }} \
       psql -U {{ postgres_config.admin_user }} -d {{ postgres_config.db_name }} -c \
       "GRANT SELECT ON domain, mailbox, alias TO {{ postgres_dovecot_user }};"
@@ -140,10 +145,15 @@
 
 - name: Create SOGo database user and grant access
   ansible.builtin.shell: |
-    docker exec {{ postgres_config.container_name }} \
-      psql -U {{ postgres_config.admin_user }} -c \
-      "DO $$ BEGIN IF NOT EXISTS (SELECT FROM pg_catalog.pg_roles WHERE rolname = '{{ postgres_sogo_user }}') THEN CREATE USER {{ postgres_sogo_user }} WITH ENCRYPTED PASSWORD '{{ sogo_password.stdout }}'; END IF; END $$;"
-
+    # Check if user exists, create if not
+    if ! docker exec {{ postgres_config.container_name }} \
+      psql -U {{ postgres_config.admin_user }} -t -c "SELECT 1 FROM pg_roles WHERE rolname='{{ postgres_sogo_user }}';" | grep -q 1; then
+      docker exec {{ postgres_config.container_name }} \
+        psql -U {{ postgres_config.admin_user }} -c \
+        "CREATE USER {{ postgres_sogo_user }} WITH ENCRYPTED PASSWORD '{{ sogo_password.stdout }}';"
+    fi
+    
+    # Grant permissions
     docker exec {{ postgres_config.container_name }} \
       psql -U {{ postgres_config.admin_user }} -d {{ postgres_config.db_name }} -c \
       "GRANT SELECT, INSERT, UPDATE, DELETE ON domain, mailbox, alias TO {{ postgres_sogo_user }};"
@@ -157,7 +167,7 @@
     state: directory
     mode: '0755'
     owner: root
-    group: postfix
+    group: root
 
 - name: Create Postfix virtual domains configuration
   ansible.builtin.copy:
@@ -171,7 +181,7 @@
     dest: "{{ mail_server_config_dir }}/postfix/sql/virtual-domains.cf"
     mode: '0640'
     owner: root
-    group: postfix
+    group: root
   no_log: true
 
 - name: Create Postfix virtual users configuration
@@ -186,7 +196,7 @@
     dest: "{{ mail_server_config_dir }}/postfix/sql/virtual-users.cf"
     mode: '0640'
     owner: root
-    group: postfix
+    group: root
   no_log: true
 
 - name: Create Postfix virtual aliases configuration
@@ -201,7 +211,7 @@
     dest: "{{ mail_server_config_dir }}/postfix/sql/virtual-aliases.cf"
     mode: '0640'
     owner: root
-    group: postfix
+    group: root
   no_log: true
 
 - name: Test database configuration

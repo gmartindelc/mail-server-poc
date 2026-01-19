@@ -15,7 +15,7 @@ mail_server_domain: "phalkons.com"
 mail_test_domain: "testdomain.local"
 
 # Database Configuration
-postgres_host: "{{ mail_server_vpn_ip }}"
+postgres_host: "localhost"
 postgres_port: 5432
 postgres_db: "mailserver"
 postgres_container_name: "mailserver-postgres"

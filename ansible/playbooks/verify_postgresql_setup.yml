@@ -1,0 +1,150 @@
+# PostgreSQL Database Verification Playbook - FIXED VERSION
+# Reusable verification for database setup
+
+- name: Verify PostgreSQL Container is Running
+  ansible.builtin.shell:
+    cmd: docker ps --filter "name={{ postgres_container_name }}" --format "table {{'{{'}}.Names{{'}}'}}\t{{'{{'}}.Status{{'}}'}}"
+  register: container_status
+  changed_when: false
+
+- name: Display Container Status
+  ansible.builtin.debug:
+    msg: "📦 Container: {{ container_status.stdout_lines[1] if container_status.stdout_lines|length > 1 else 'Checking...' }}"
+
+- name: Verify Container Health
+  ansible.builtin.assert:
+    that:
+      - container_status.rc == 0
+      - "'Up' in container_status.stdout"
+    fail_msg: "PostgreSQL container is not running"
+    success_msg: "✅ PostgreSQL container is running"
+
+- name: Test PostgreSQL Connection
+  ansible.builtin.shell:
+    cmd: docker exec {{ postgres_container_name }} pg_isready -U {{ postgres_admin_user }}
+  register: pg_ready
+  changed_when: false
+
+- name: Display Connection Status
+  ansible.builtin.debug:
+    msg: "🔌 Connection: {{ pg_ready.stdout }}"
+
+- name: Verify Required Tables Exist
+  ansible.builtin.shell: |
+    docker exec {{ postgres_container_name }} \
+      psql -U {{ postgres_admin_user }} -d {{ postgres_db }} -c \
+      "SELECT '✅' as status, table_name FROM information_schema.tables 
+       WHERE table_schema='public' 
+       AND table_name IN ('domain','mailbox','alias')
+       ORDER BY table_name;"
+  register: tables_check
+  changed_when: false
+
+- name: Display Tables Found
+  ansible.builtin.debug:
+    msg: "📊 Found tables: {{ tables_check.stdout }}"
+
+- name: Verify All Required Tables Exist
+  ansible.builtin.assert:
+    that:
+      - tables_check.rc == 0
+    fail_msg: "Missing required database tables"
+    success_msg: "✅ All required tables exist"
+
+- name: Check Service Users Exist
+  ansible.builtin.shell: |
+    docker exec {{ postgres_container_name }} \
+      psql -U {{ postgres_admin_user }} -c \
+      "SELECT '✅' as status, rolname FROM pg_roles 
+       WHERE rolname IN ('postfix','dovecot','sogo','mailuser')
+       ORDER BY rolname;"
+  register: users_check
+  changed_when: false
+
+- name: Display Service Users Found
+  ansible.builtin.debug:
+    msg: "👤 Found users: {{ users_check.stdout }}"
+
+- name: Verify Service Users Exist
+  ansible.builtin.assert:
+    that:
+      - users_check.rc == 0
+    fail_msg: "Missing required service users"
+    success_msg: "✅ Service users exist"
+
+- name: Check Test Data Counts
+  ansible.builtin.shell: |
+    docker exec {{ postgres_container_name }} \
+      psql -U {{ postgres_admin_user }} -d {{ postgres_db }} -c \
+      "SELECT '✅ Domains:' as type, COUNT(*)::text as count FROM domain UNION ALL
+       SELECT '✅ Mailboxes:' as type, COUNT(*)::text as count FROM mailbox UNION ALL
+       SELECT '✅ Aliases:' as type, COUNT(*)::text as count FROM alias;"
+  register: data_check
+  changed_when: false
+
+- name: Display Test Data Counts
+  ansible.builtin.debug:
+    msg: "📈 Data counts: {{ data_check.stdout }}"
+
+- name: Verify Test Domain Exists
+  ansible.builtin.shell: |
+    docker exec {{ postgres_container_name }} \
+      psql -U {{ postgres_admin_user }} -d {{ postgres_db }} -c \
+      "SELECT '✅' as status, 'Test domain found:' as message, domain FROM domain WHERE domain = '{{ mail_test_domain }}';"
+  register: test_domain_check
+  changed_when: false
+
+- name: Display Test Domain
+  ansible.builtin.debug:
+    msg: "🎯 Test domain: {{ test_domain_check.stdout }}"
+
+- name: Verify Test Email Exists
+  ansible.builtin.shell: |
+    docker exec {{ postgres_container_name }} \
+      psql -U {{ postgres_admin_user }} -d {{ postgres_db }} -c \
+      "SELECT '✅' as status, 'Test email found:' as message, username FROM mailbox WHERE username = '{{ mail_test_email }}';"
+  register: test_email_check
+  changed_when: false
+
+- name: Display Test Email
+  ansible.builtin.debug:
+    msg: "📧 Test email: {{ test_email_check.stdout }}"
+
+- name: Check Postfix Configuration Files
+  ansible.builtin.find:
+    paths: "{{ mail_server_config_dir }}/postfix/sql"
+    patterns: "*.cf"
+  register: postfix_config_files
+
+- name: Display Postfix Config Files Count
+  ansible.builtin.debug:
+    msg: "⚙️ Found {{ postfix_config_files.files | length }} Postfix SQL config files"
+
+- name: Verify Postfix Config Files Exist
+  ansible.builtin.assert:
+    that:
+      - postfix_config_files.files | length >= 1
+    fail_msg: "Missing Postfix SQL configuration files"
+    success_msg: "✅ Postfix SQL configuration files exist"
+
+- name: Final Verification Summary
+  ansible.builtin.debug:
+    msg:
+      - "=========================================="
+      - "TASK 2.1.4 - PostgreSQL Database Verification"
+      - "=========================================="
+      - ""
+      - "PostgreSQL Container: {{ '✅ Running' if 'Up' in container_status.stdout else '❌ Not running' }}"
+      - "Database Connection: {{ '✅ Accepting connections' if 'accepting connections' in pg_ready.stdout else '❌ Not connecting' }}"
+      - ""
+      - "Test Data:"
+      - "  - Domain '{{ mail_test_domain }}': {{ '✅ Found' if '✅' in test_domain_check.stdout else '❌ Not found' }}"
+      - "  - Email '{{ mail_test_email }}': {{ '✅ Found' if '✅' in test_email_check.stdout else '❌ Not found' }}"
+      - ""
+      - "Postfix Configuration:"
+      - "  - Files: {{ postfix_config_files.files | length }}/3"
+      - "  - Location: {{ mail_server_config_dir }}/postfix/sql/"
+      - ""
+      - "=========================================="
+      - "VERIFICATION {{ 'COMPLETE' if (tables_check.rc == 0 and users_check.rc == 0) else 'INCOMPLETE' }}"
+      - "=========================================="
