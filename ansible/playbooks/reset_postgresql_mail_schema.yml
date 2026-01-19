@@ -1,0 +1,445 @@
+---
+# Playbook: Reset PostgreSQL Container and Create Mail Server Schema
+# 
+# Purpose: Clean slate - remove old container, create new one with correct schema
+# This creates a schema that matches what Postfix/Dovecot playbooks expect
+#
+# IMPORTANT: This will DELETE all existing mail data!
+# 
+# Schema created:
+#   - domain table (with active column)
+#   - mailbox table (with active column, maildir column)
+#   - alias table (with active column)
+#
+# Usage: ansible-playbook playbooks/reset_postgresql_mail_schema.yml
+
+- name: Reset PostgreSQL Container and Create Mail Server Schema
+  hosts: mail_servers
+  become: yes
+  gather_facts: yes
+  
+  vars:
+    # Default passwords (will be generated)
+    backup_existing: true
+    
+  tasks:
+    - name: Warning - confirm destructive operation
+      ansible.builtin.pause:
+        prompt: |
+          
+          ⚠️  WARNING: This will DELETE the existing PostgreSQL container and ALL mail data!
+          
+          This playbook will:
+          1. Stop and remove the existing PostgreSQL container
+          2. Backup existing data (if backup_existing=true)
+          3. Create a new PostgreSQL 17 container
+          4. Create mail server schema (domain, mailbox, alias tables)
+          5. Create service users (postfix_user, dovecot_user, sogo_user)
+          6. Insert test data
+          
+          Press Ctrl+C to abort, or Enter to continue
+      when: ansible_check_mode == false
+
+    # ==========================================
+    # BACKUP EXISTING DATA
+    # ==========================================
+
+    - name: Create backup directory
+      ansible.builtin.file:
+        path: "{{ postgres_backup_dir }}/pre-reset-{{ ansible_date_time.epoch }}"
+        state: directory
+        mode: '0700'
+      when: backup_existing | default(true)
+
+    - name: Backup existing PostgreSQL data
+      ansible.builtin.command:
+        cmd: docker exec {{ postgres_container_name }} pg_dumpall -U {{ postgres_admin_user }} > {{ postgres_backup_dir }}/pre-reset-{{ ansible_date_time.epoch }}/full_backup.sql
+      register: backup_result
+      failed_when: false
+      when: backup_existing | default(true)
+
+    - name: Display backup status
+      ansible.builtin.debug:
+        msg: "Backup {{ 'completed' if backup_result.rc == 0 else 'skipped (container may not exist)' }}"
+      when: backup_existing | default(true)
+
+    # ==========================================
+    # REMOVE OLD CONTAINER
+    # ==========================================
+
+    - name: Stop PostgreSQL container
+      ansible.builtin.command:
+        cmd: docker stop {{ postgres_container_name }}
+      register: stop_result
+      failed_when: false
+      changed_when: stop_result.rc == 0
+
+    - name: Remove PostgreSQL container
+      ansible.builtin.command:
+        cmd: docker rm {{ postgres_container_name }}
+      register: remove_result
+      failed_when: false
+      changed_when: remove_result.rc == 0
+
+    - name: Remove old PostgreSQL data directory
+      ansible.builtin.file:
+        path: "{{ postgres_data_dir }}"
+        state: absent
+      when: backup_existing | default(true)
+
+    - name: Create fresh PostgreSQL data directory
+      ansible.builtin.file:
+        path: "{{ postgres_data_dir }}"
+        state: directory
+        owner: "{{ postgres_uid }}"
+        group: "{{ postgres_uid }}"
+        mode: '0700'
+
+    # ==========================================
+    # CREATE NEW CONTAINER
+    # ==========================================
+
+    - name: Generate PostgreSQL admin password
+      ansible.builtin.shell:
+        cmd: openssl rand -base64 32 | tr -d '/+=' | head -c 32
+      register: postgres_admin_password
+      changed_when: false
+      no_log: true
+
+    - name: Create PostgreSQL .env file
+      ansible.builtin.copy:
+        dest: "{{ postgres_env_file }}"
+        content: |
+          POSTGRES_PASSWORD={{ postgres_admin_password.stdout }}
+          POSTGRES_USER={{ postgres_admin_user }}
+          POSTGRES_DB={{ postgres_db }}
+        mode: '0600'
+        owner: root
+        group: root
+      no_log: true
+
+    - name: Start new PostgreSQL container
+      ansible.builtin.command:
+        cmd: >
+          docker run -d
+          --name {{ postgres_container_name }}
+          -p {{ postgres_host }}:{{ postgres_port }}:5432
+          -e POSTGRES_PASSWORD={{ postgres_admin_password.stdout }}
+          -e POSTGRES_USER={{ postgres_admin_user }}
+          -e POSTGRES_DB={{ postgres_db }}
+          -v {{ postgres_data_dir }}:/var/lib/postgresql/data
+          -v {{ postgres_wal_dir }}:/var/lib/postgresql/wal_archive
+          --restart unless-stopped
+          --health-cmd="pg_isready -U {{ postgres_admin_user }}"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=5
+          postgres:17-alpine
+      register: container_start
+      changed_when: true
+
+    - name: Wait for PostgreSQL to be ready
+      ansible.builtin.command:
+        cmd: docker exec {{ postgres_container_name }} pg_isready -U {{ postgres_admin_user }}
+      register: pg_ready
+      until: pg_ready.rc == 0
+      retries: 30
+      delay: 2
+      changed_when: false
+
+    # ==========================================
+    # CREATE SERVICE USERS
+    # ==========================================
+
+    - name: Generate password for Postfix user
+      ansible.builtin.shell:
+        cmd: openssl rand -base64 32 | tr -d '/+=' | head -c 32
+      register: postfix_password
+      changed_when: false
+      no_log: true
+
+    - name: Generate password for Dovecot user
+      ansible.builtin.shell:
+        cmd: openssl rand -base64 32 | tr -d '/+=' | head -c 32
+      register: dovecot_password
+      changed_when: false
+      no_log: true
+
+    - name: Generate password for SOGo user
+      ansible.builtin.shell:
+        cmd: openssl rand -base64 32 | tr -d '/+=' | head -c 32
+      register: sogo_password
+      changed_when: false
+      no_log: true
+
+    - name: Create database users
+      ansible.builtin.shell:
+        cmd: |
+          docker exec {{ postgres_container_name }} psql -U {{ postgres_admin_user }} <<EOF
+          -- Create service users
+          CREATE USER {{ postgres_postfix_user }} WITH ENCRYPTED PASSWORD '{{ postfix_password.stdout }}';
+          CREATE USER {{ postgres_dovecot_user }} WITH ENCRYPTED PASSWORD '{{ dovecot_password.stdout }}';
+          CREATE USER {{ postgres_sogo_user }} WITH ENCRYPTED PASSWORD '{{ sogo_password.stdout }}';
+          EOF
+      no_log: true
+      changed_when: true
+
+    # ==========================================
+    # CREATE MAIL SERVER SCHEMA
+    # ==========================================
+
+    - name: Create mail server database schema
+      ansible.builtin.shell:
+        cmd: |
+          docker exec {{ postgres_container_name }} bash -c "psql -U {{ postgres_admin_user }} -d {{ postgres_db }} <<'EOSQL'
+          -- ==========================================
+          -- Mail Server Database Schema
+          -- Compatible with Postfix + Dovecot 2.4
+          -- ==========================================
+          
+          -- Domain table
+          CREATE TABLE domain (
+              domain VARCHAR(255) PRIMARY KEY,
+              description TEXT,
+              aliases INTEGER DEFAULT 0,
+              mailboxes INTEGER DEFAULT 0,
+              maxquota BIGINT DEFAULT 0,
+              quota BIGINT DEFAULT 0,
+              transport VARCHAR(255) DEFAULT 'virtual',
+              backupmx BOOLEAN DEFAULT false,
+              active BOOLEAN DEFAULT true,
+              created TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+              modified TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+          );
+          
+          -- Mailbox table (virtual users)
+          CREATE TABLE mailbox (
+              username VARCHAR(255) PRIMARY KEY,
+              password VARCHAR(255) NOT NULL,
+              name VARCHAR(255),
+              maildir VARCHAR(255) NOT NULL,
+              quota BIGINT DEFAULT 0,
+              local_part VARCHAR(255),
+              domain VARCHAR(255),
+              active BOOLEAN DEFAULT true,
+              created TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+              modified TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+              CONSTRAINT fk_mailbox_domain FOREIGN KEY (domain) REFERENCES domain(domain) ON DELETE CASCADE
+          );
+          
+          -- Alias table
+          CREATE TABLE alias (
+              address VARCHAR(255) PRIMARY KEY,
+              goto TEXT NOT NULL,
+              domain VARCHAR(255),
+              active BOOLEAN DEFAULT true,
+              created TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+              modified TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+              CONSTRAINT fk_alias_domain FOREIGN KEY (domain) REFERENCES domain(domain) ON DELETE CASCADE
+          );
+          
+          -- Create indexes for performance
+          CREATE INDEX idx_mailbox_domain ON mailbox(domain);
+          CREATE INDEX idx_mailbox_active ON mailbox(active);
+          CREATE INDEX idx_alias_domain ON alias(domain);
+          CREATE INDEX idx_alias_active ON alias(active);
+          CREATE INDEX idx_domain_active ON domain(active);
+          
+          -- Grant permissions to service users
+          GRANT SELECT ON domain, mailbox, alias TO {{ postgres_postfix_user }};
+          GRANT SELECT ON domain, mailbox, alias TO {{ postgres_dovecot_user }};
+          GRANT SELECT, INSERT, UPDATE, DELETE ON domain, mailbox, alias TO {{ postgres_sogo_user }};
+          EOSQL
+          "
+      changed_when: true
+
+    # ==========================================
+    # INSERT TEST DATA
+    # ==========================================
+
+    - name: Insert test data
+      ansible.builtin.shell:
+        cmd: |
+          docker exec {{ postgres_container_name }} bash -c "psql -U {{ postgres_admin_user }} -d {{ postgres_db }} <<'EOSQL'
+          -- Insert test domain
+          INSERT INTO domain (domain, description, active)
+          VALUES ('{{ mail_test_domain }}', 'Test Domain', true);
+          
+          -- Insert test user (password: TestPass123!)
+          -- Using SHA512-CRYPT hash generated for: TestPass123!
+          INSERT INTO mailbox (username, password, name, maildir, domain, local_part, active)
+          VALUES (
+              '{{ mail_test_email }}',
+              '{SHA512-CRYPT}\$6\$rounds=5000\$saltsaltsaltsalt\$8GNYvG0xZ0F3xQc9xhXQv0V6kzJhXYHUy8L8EgZJnQCQv9W3LYqKxQ6GnLPY3vvNnXWqKYGLQxQHvYGLnKWGH.',
+              'Test User',
+              '{{ mail_test_domain }}/{{ mail_test_username }}/',
+              '{{ mail_test_domain }}',
+              '{{ mail_test_username }}',
+              true
+          );
+          
+          -- Insert test alias
+          INSERT INTO alias (address, goto, domain, active)
+          VALUES (
+              '{{ mail_test_alias }}',
+              '{{ mail_test_email }}',
+              '{{ mail_test_domain }}',
+              true
+          );
+          EOSQL
+          "
+      changed_when: true
+
+    # ==========================================
+    # SAVE CREDENTIALS
+    # ==========================================
+
+    - name: Create credentials file
+      ansible.builtin.copy:
+        dest: "{{ postgres_credentials_file }}"
+        content: |
+          ==========================================
+          PostgreSQL Mail Server Credentials
+          ==========================================
+          
+          Generated: {{ ansible_date_time.iso8601 }}
+          Server: {{ mail_server_hostname }}
+          Database: {{ postgres_db }}
+          Host: {{ postgres_host }}
+          Port: {{ postgres_port }}
+          
+          ⚠️  IMPORTANT: Store this file securely!
+          
+          ==========================================
+          Service User Credentials
+          ==========================================
+          
+          1. Postfix (Mail Routing):
+          --------------------------
+          Username: {{ postgres_postfix_user }}
+          Password: {{ postfix_password.stdout }}
+          Permissions: SELECT on domain, mailbox, alias
+          Connection: postgresql://{{ postgres_postfix_user }}:{{ postfix_password.stdout }}@{{ postgres_host }}:{{ postgres_port }}/{{ postgres_db }}
+          
+          2. Dovecot (IMAP/POP3 Authentication):
+          --------------------------------------
+          Username: {{ postgres_dovecot_user }}
+          Password: {{ dovecot_password.stdout }}
+          Permissions: SELECT on domain, mailbox, alias
+          Connection: postgresql://{{ postgres_dovecot_user }}:{{ dovecot_password.stdout }}@{{ postgres_host }}:{{ postgres_port }}/{{ postgres_db }}
+          
+          3. SOGo (Webmail/Calendar/Contacts):
+          ------------------------------------
+          Username: {{ postgres_sogo_user }}
+          Password: {{ sogo_password.stdout }}
+          Permissions: SELECT, INSERT, UPDATE, DELETE on domain, mailbox, alias
+          Connection: postgresql://{{ postgres_sogo_user }}:{{ sogo_password.stdout }}@{{ postgres_host }}:{{ postgres_port }}/{{ postgres_db }}
+          
+          4. PostgreSQL Admin (Full Access):
+          ----------------------------------
+          Username: {{ postgres_admin_user }}
+          Password: {{ postgres_admin_password.stdout }}
+          Permissions: Full database access
+          Connection: postgresql://{{ postgres_admin_user }}:{{ postgres_admin_password.stdout }}@{{ postgres_host }}:{{ postgres_port }}/{{ postgres_db }}
+          
+          ==========================================
+          Database Schema
+          ==========================================
+          
+          Tables Created:
+          ---------------
+          1. domain
+             - domain (VARCHAR PRIMARY KEY)
+             - description, aliases, mailboxes, maxquota, quota
+             - transport, backupmx, active, created, modified
+          
+          2. mailbox
+             - username (VARCHAR PRIMARY KEY)
+             - password (hashed with SHA512-CRYPT)
+             - name, maildir, quota, local_part, domain
+             - active, created, modified
+          
+          3. alias
+             - address (VARCHAR PRIMARY KEY)
+             - goto (destination email)
+             - domain, active, created, modified
+          
+          Test Data Inserted:
+          -------------------
+          Domain: {{ mail_test_domain }}
+          User: {{ mail_test_email }}
+          Password: {{ mail_test_password }}
+          Alias: {{ mail_test_alias }} → {{ mail_test_email }}
+          
+          ==========================================
+        mode: '0600'
+        owner: root
+        group: root
+      no_log: true
+
+    # ==========================================
+    # VERIFICATION
+    # ==========================================
+
+    - name: Verify schema creation
+      ansible.builtin.command:
+        cmd: docker exec {{ postgres_container_name }} psql -U {{ postgres_admin_user }} -d {{ postgres_db }} -c "\dt"
+      register: schema_verify
+      changed_when: false
+
+    - name: Verify test data
+      ansible.builtin.command:
+        cmd: docker exec {{ postgres_container_name }} psql -U {{ postgres_admin_user }} -d {{ postgres_db }} -c "SELECT domain FROM domain; SELECT username FROM mailbox; SELECT address FROM alias;"
+      register: data_verify
+      changed_when: false
+
+    - name: Test Postfix user connection
+      ansible.builtin.shell:
+        cmd: PGPASSWORD='{{ postfix_password.stdout }}' psql -h {{ postgres_host }} -U {{ postgres_postfix_user }} -d {{ postgres_db }} -c "SELECT domain FROM domain WHERE domain='{{ mail_test_domain }}' AND active=true"
+      register: postfix_test
+      changed_when: false
+      failed_when: false
+
+    - name: Display completion summary
+      ansible.builtin.debug:
+        msg:
+          - "=========================================="
+          - "PostgreSQL Container Reset Complete"
+          - "=========================================="
+          - ""
+          - "✓ Old container removed and backed up"
+          - "✓ New PostgreSQL 17 container created"
+          - "✓ Mail server schema created:"
+          - "    - domain table (with active column)"
+          - "    - mailbox table (with active, maildir columns)"
+          - "    - alias table (with active column)"
+          - "✓ Service users created:"
+          - "    - {{ postgres_postfix_user }}"
+          - "    - {{ postgres_dovecot_user }}"
+          - "    - {{ postgres_sogo_user }}"
+          - "✓ Test data inserted:"
+          - "    - Domain: {{ mail_test_domain }}"
+          - "    - User: {{ mail_test_email }}"
+          - "    - Alias: {{ mail_test_alias }}"
+          - ""
+          - "Credentials saved to: {{ postgres_credentials_file }}"
+          - ""
+          - "Container Status:"
+          - "  Name: {{ postgres_container_name }}"
+          - "  Image: postgres:17-alpine"
+          - "  Binding: {{ postgres_host }}:{{ postgres_port }}"
+          - "  Data: {{ postgres_data_dir }}"
+          - ""
+          - "Postfix Connection Test: {{ 'SUCCESS ✓' if postfix_test.rc == 0 else 'FAILED ✗' }}"
+          - ""
+          - "Verify schema:"
+          - "  docker exec {{ postgres_container_name }} psql -U {{ postgres_admin_user }} -d {{ postgres_db }} -c '\\dt'"
+          - ""
+          - "Next steps:"
+          - "  1. Run Task 2.2.1 - Install Postfix"
+          - "  2. Run Task 2.2.2 - Install Dovecot"
+          - "  3. Run Task 2.2.3 - Install OpenDKIM"
+          - "  4. Run Task 2.2.4 - Test mail system"
+          - ""
+          - "Schema is now compatible with improved playbooks!"
+          - "=========================================="

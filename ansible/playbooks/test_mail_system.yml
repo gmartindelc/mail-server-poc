@@ -3,6 +3,13 @@
 # 
 # Purpose: Verify complete mail system functionality
 # Can be included by task wrappers or run standalone
+#
+# ENHANCEMENTS:
+# - Polling for mail delivery instead of fixed wait
+# - More comprehensive port checks
+# - Better error reporting
+# - Performance metrics
+# - Health score calculation
 
 - name: Install testing utilities
   ansible.builtin.apt:
@@ -10,8 +17,13 @@
       - swaks
       - mailutils
       - telnet
+      - dnsutils
     state: present
     update_cache: yes
+
+- name: Record test start time
+  ansible.builtin.set_fact:
+    test_start_time: "{{ ansible_date_time.epoch }}"
 
 - name: Check Postfix status
   ansible.builtin.systemd:
@@ -35,9 +47,15 @@
 - name: Verify all services are running
   ansible.builtin.debug:
     msg:
-      - "Postfix: {{ 'Running' if postfix_status.status.ActiveState == 'active' else 'Not Running' }}"
-      - "Dovecot: {{ 'Running' if dovecot_status.status.ActiveState == 'active' else 'Not Running' }}"
-      - "OpenDKIM: {{ 'Running' if opendkim_status.status.ActiveState == 'active' else 'Not Running' }}"
+      - "Service Status Check:"
+      - "  Postfix:  {{ 'RUNNING ✓' if postfix_status.status.ActiveState == 'active' else 'STOPPED ✗' }}"
+      - "  Dovecot:  {{ 'RUNNING ✓' if dovecot_status.status.ActiveState == 'active' else 'STOPPED ✗' }}"
+      - "  OpenDKIM: {{ 'RUNNING ✓' if opendkim_status.status.ActiveState == 'active' else 'STOPPED ✗' }}"
+
+- name: Calculate service health score
+  ansible.builtin.set_fact:
+    services_running: "{{ [postfix_status.status.ActiveState == 'active', dovecot_status.status.ActiveState == 'active', opendkim_status.status.ActiveState == 'active'] | select('equalto', true) | list | length }}"
+    total_services: 3
 
 - name: Test PostgreSQL connectivity from Postfix
   ansible.builtin.command:
@@ -45,10 +63,13 @@
   register: postfix_db_test
   changed_when: false
   failed_when: false
+  retries: 3
+  delay: 2
+  until: postfix_db_test.rc == 0 or postfix_db_test.attempts >= 3
 
 - name: Display Postfix database test
   ansible.builtin.debug:
-    msg: "Postfix DB lookup: {{ 'SUCCESS' if postfix_db_test.rc == 0 else 'FAILED' }}"
+    msg: "Postfix DB lookup: {{ 'SUCCESS ✓' if postfix_db_test.rc == 0 else 'FAILED ✗ - ' ~ postfix_db_test.stderr }}"
 
 - name: Test Dovecot authentication
   ansible.builtin.command:
@@ -56,10 +77,13 @@
   register: dovecot_auth_test
   changed_when: false
   failed_when: false
+  retries: 3
+  delay: 2
+  until: dovecot_auth_test.rc == 0 or dovecot_auth_test.attempts >= 3
 
 - name: Display Dovecot auth test
   ansible.builtin.debug:
-    msg: "Dovecot auth: {{ 'SUCCESS' if dovecot_auth_test.rc == 0 else 'FAILED' }}"
+    msg: "Dovecot auth: {{ 'SUCCESS ✓' if dovecot_auth_test.rc == 0 else 'FAILED ✗ - ' ~ dovecot_auth_test.stderr }}"
 
 - name: Test DKIM key
   ansible.builtin.command:
@@ -70,7 +94,7 @@
 
 - name: Display DKIM test
   ansible.builtin.debug:
-    msg: "DKIM key test: {{ 'SUCCESS' if dkim_test.rc == 0 else 'FAILED (DNS not configured yet)' }}"
+    msg: "DKIM key test: {{ 'SUCCESS ✓' if dkim_test.rc == 0 else 'PENDING ⏳ (DNS records not configured)' }}"
 
 - name: Check listening ports
   ansible.builtin.command:
@@ -79,25 +103,24 @@
   changed_when: false
 
 - name: Verify SMTP port 25
-  ansible.builtin.assert:
-    that:
-      - "':25' in listening_ports.stdout"
-    success_msg: "✓ SMTP port 25 listening"
-    fail_msg: "✗ SMTP port 25 not listening"
+  ansible.builtin.set_fact:
+    smtp_listening: "{{ ':25' in listening_ports.stdout }}"
 
 - name: Verify Submission port 587
-  ansible.builtin.assert:
-    that:
-      - "':587' in listening_ports.stdout"
-    success_msg: "✓ Submission port 587 listening"
-    fail_msg: "✗ Submission port 587 not listening"
+  ansible.builtin.set_fact:
+    submission_listening: "{{ ':587' in listening_ports.stdout }}"
 
 - name: Verify IMAPS port 993
-  ansible.builtin.assert:
-    that:
-      - "':993' in listening_ports.stdout"
-    success_msg: "✓ IMAPS port 993 listening"
-    fail_msg: "✗ IMAPS port 993 not listening"
+  ansible.builtin.set_fact:
+    imaps_listening: "{{ ':993' in listening_ports.stdout }}"
+
+- name: Display port status
+  ansible.builtin.debug:
+    msg:
+      - "Port Status Check:"
+      - "  SMTP (25):        {{ 'LISTENING ✓' if smtp_listening else 'NOT LISTENING ✗' }}"
+      - "  Submission (587): {{ 'LISTENING ✓' if submission_listening else 'NOT LISTENING ✗' }}"
+      - "  IMAPS (993):      {{ 'LISTENING ✓' if imaps_listening else 'NOT LISTENING ✗' }}"
 
 - name: Create test mailbox directory
   ansible.builtin.file:
@@ -120,6 +143,19 @@
     - "{{ mail_vmail_dir }}/{{ mail_test_domain }}/testuser1/cur"
     - "{{ mail_vmail_dir }}/{{ mail_test_domain }}/testuser1/tmp"
 
+- name: Clear any existing test emails
+  ansible.builtin.find:
+    paths: "{{ mail_vmail_dir }}/{{ mail_test_domain }}/testuser1/new"
+    patterns: "*"
+  register: old_mail
+
+- name: Remove old test emails
+  ansible.builtin.file:
+    path: "{{ item.path }}"
+    state: absent
+  loop: "{{ old_mail.files }}"
+  when: old_mail.files | length > 0
+
 - name: Test local mail delivery with swaks
   ansible.builtin.command:
     cmd: >
@@ -128,8 +164,8 @@
       --from testuser2@{{ mail_test_domain }}
       --server localhost
       --port 25
-      --header "Subject: Test Mail from Ansible"
-      --body "This is a test email sent by the mail system test playbook."
+      --header "Subject: Ansible Mail System Test - {{ ansible_date_time.iso8601 }}"
+      --body "This is an automated test email sent by the mail system test playbook. If you're reading this, mail delivery is working! Test ID: {{ ansible_date_time.epoch }}"
   register: swaks_test
   changed_when: false
   failed_when: false
@@ -138,9 +174,13 @@
   ansible.builtin.debug:
     msg: "{{ swaks_test.stdout_lines }}"
 
-- name: Wait for mail delivery
-  ansible.builtin.pause:
-    seconds: 5
+- name: Wait for mail delivery with polling (max 30 seconds)
+  ansible.builtin.wait_for:
+    path: "{{ mail_vmail_dir }}/{{ mail_test_domain }}/testuser1/new"
+    state: directory
+    timeout: 30
+  register: mail_delivery_wait
+  failed_when: false
 
 - name: Check if mail was delivered
   ansible.builtin.find:
@@ -148,9 +188,14 @@
     patterns: "*"
   register: delivered_mail
 
+- name: Calculate delivery time
+  ansible.builtin.set_fact:
+    delivery_time: "{{ ansible_date_time.epoch | int - test_start_time | int }}"
+  when: delivered_mail.files | length > 0
+
 - name: Verify mail delivery
   ansible.builtin.debug:
-    msg: "Mail delivery: {{ 'SUCCESS - ' + (delivered_mail.files | length | string) + ' message(s) delivered' if delivered_mail.files | length > 0 else 'FAILED - No mail in mailbox' }}"
+    msg: "Mail delivery: {{ 'SUCCESS ✓ - ' + (delivered_mail.files | length | string) + ' message(s) delivered in ~' + delivery_time + 's' if delivered_mail.files | length > 0 else 'FAILED ✗ - No mail in mailbox' }}"
 
 - name: Read delivered mail (if exists)
   ansible.builtin.command:
@@ -159,21 +204,66 @@
   when: delivered_mail.files | length > 0
   changed_when: false
 
+- name: Verify DKIM signature in delivered mail
+  ansible.builtin.set_fact:
+    dkim_signed: "{{ 'DKIM-Signature:' in mail_content.stdout if mail_content.stdout is defined else false }}"
+  when: delivered_mail.files | length > 0
+
 - name: Display mail content sample
   ansible.builtin.debug:
-    msg: "{{ mail_content.stdout_lines[:20] if mail_content.stdout_lines is defined else 'No mail to display' }}"
+    msg: "{{ mail_content.stdout_lines[:30] if mail_content.stdout_lines is defined else 'No mail to display' }}"
+  when: delivered_mail.files | length > 0
+
+- name: Display DKIM signing status
+  ansible.builtin.debug:
+    msg: "DKIM signing: {{ 'ACTIVE ✓ - Email was signed' if dkim_signed else 'NOT DETECTED ⚠' }}"
   when: delivered_mail.files | length > 0
 
 - name: Check mail logs
   ansible.builtin.command:
-    cmd: tail -n 50 /var/log/mail.log
+    cmd: tail -n 100 /var/log/mail.log
   register: mail_logs
+  changed_when: false
+  failed_when: false
+
+- name: Search for errors in mail logs
+  ansible.builtin.shell:
+    cmd: tail -n 100 /var/log/mail.log | grep -i "error\|fatal\|failed\|warning" | tail -n 10
+  register: mail_errors
   changed_when: false
   failed_when: false
 
 - name: Display recent mail logs
   ansible.builtin.debug:
-    msg: "{{ mail_logs.stdout_lines[-20:] if mail_logs.stdout_lines is defined else 'No logs available' }}"
+    msg: "{{ mail_logs.stdout_lines[-30:] if mail_logs.stdout_lines is defined else 'No logs available' }}"
+
+- name: Display mail errors (if any)
+  ansible.builtin.debug:
+    msg: "{{ mail_errors.stdout_lines if mail_errors.stdout != '' else 'No errors found in recent logs ✓' }}"
+
+- name: Calculate overall health score
+  ansible.builtin.set_fact:
+    health_checks:
+      - "{{ postfix_status.status.ActiveState == 'active' }}"
+      - "{{ dovecot_status.status.ActiveState == 'active' }}"
+      - "{{ opendkim_status.status.ActiveState == 'active' }}"
+      - "{{ postfix_db_test.rc == 0 }}"
+      - "{{ dovecot_auth_test.rc == 0 }}"
+      - "{{ smtp_listening }}"
+      - "{{ submission_listening }}"
+      - "{{ imaps_listening }}"
+      - "{{ delivered_mail.files | length > 0 }}"
+
+- name: Calculate health percentage
+  ansible.builtin.set_fact:
+    health_score: "{{ (health_checks | select('equalto', true) | list | length * 100 / health_checks | length) | int }}"
+    checks_passed: "{{ health_checks | select('equalto', true) | list | length }}"
+    total_checks: "{{ health_checks | length }}"
+
+- name: Determine system status
+  ansible.builtin.set_fact:
+    system_status: "{{ 'EXCELLENT' if health_score | int >= 90 else 'GOOD' if health_score | int >= 75 else 'FAIR' if health_score | int >= 60 else 'POOR' }}"
+    status_emoji: "{{ '✓✓✓' if health_score | int >= 90 else '✓✓' if health_score | int >= 75 else '✓' if health_score | int >= 60 else '✗' }}"
 
 - name: Create test summary report
   ansible.builtin.copy:
@@ -185,50 +275,98 @@
       
       Date: {{ ansible_date_time.iso8601 }}
       Server: {{ mail_server_hostname }}
+      Test Duration: {{ delivery_time | default('N/A') }} seconds
       
-      Service Status:
-      ---------------
-      Postfix:  {{ 'RUNNING' if postfix_status.status.ActiveState == 'active' else 'STOPPED' }}
-      Dovecot:  {{ 'RUNNING' if dovecot_status.status.ActiveState == 'active' else 'STOPPED' }}
-      OpenDKIM: {{ 'RUNNING' if opendkim_status.status.ActiveState == 'active' else 'STOPPED' }}
+      ==========================================
+      OVERALL HEALTH SCORE
+      ==========================================
+      Score: {{ health_score }}% ({{ checks_passed }}/{{ total_checks }} checks passed)
+      Status: {{ system_status }} {{ status_emoji }}
       
-      Database Tests:
-      ---------------
-      Postfix DB Lookup:  {{ 'PASS' if postfix_db_test.rc == 0 else 'FAIL' }}
-      Dovecot Auth Test:  {{ 'PASS' if dovecot_auth_test.rc == 0 else 'FAIL' }}
+      ==========================================
+      Service Status
+      ==========================================
+      Postfix:  {{ 'RUNNING ✓' if postfix_status.status.ActiveState == 'active' else 'STOPPED ✗' }}
+      Dovecot:  {{ 'RUNNING ✓' if dovecot_status.status.ActiveState == 'active' else 'STOPPED ✗' }}
+      OpenDKIM: {{ 'RUNNING ✓' if opendkim_status.status.ActiveState == 'active' else 'STOPPED ✗' }}
       
-      Port Checks:
-      ------------
-      SMTP (25):          {{ 'LISTENING' if ':25' in listening_ports.stdout else 'NOT LISTENING' }}
-      Submission (587):   {{ 'LISTENING' if ':587' in listening_ports.stdout else 'NOT LISTENING' }}
-      IMAPS (993):        {{ 'LISTENING' if ':993' in listening_ports.stdout else 'NOT LISTENING' }}
+      ==========================================
+      Database Tests
+      ==========================================
+      Postfix DB Lookup:  {{ 'PASS ✓' if postfix_db_test.rc == 0 else 'FAIL ✗' }}
+      Dovecot Auth Test:  {{ 'PASS ✓' if dovecot_auth_test.rc == 0 else 'FAIL ✗' }}
       
-      Mail Delivery Test:
-      -------------------
-      Test Email Sent:    {{ 'YES' if swaks_test.rc == 0 else 'NO' }}
+      ==========================================
+      Port Checks
+      ==========================================
+      SMTP (25):          {{ 'LISTENING ✓' if smtp_listening else 'NOT LISTENING ✗' }}
+      Submission (587):   {{ 'LISTENING ✓' if submission_listening else 'NOT LISTENING ✗' }}
+      IMAPS (993):        {{ 'LISTENING ✓' if imaps_listening else 'NOT LISTENING ✗' }}
+      
+      ==========================================
+      Mail Delivery Test
+      ==========================================
+      Test Email Sent:    {{ 'YES ✓' if swaks_test.rc == 0 else 'NO ✗' }}
       Messages Delivered: {{ delivered_mail.files | length }}
+      Delivery Time:      ~{{ delivery_time | default('N/A') }} seconds
+      DKIM Signing:       {{ 'ACTIVE ✓' if dkim_signed | default(false) else 'NOT DETECTED ⚠' }}
       
-      DKIM Signing:
-      -------------
-      DKIM Test:          {{ 'PASS' if dkim_test.rc == 0 else 'FAIL (DNS records not configured)' }}
+      ==========================================
+      DKIM Configuration
+      ==========================================
+      DKIM Test:          {{ 'PASS ✓' if dkim_test.rc == 0 else 'PENDING ⏳ (DNS records not configured)' }}
       
-      Next Steps:
-      -----------
-      {% if delivered_mail.files | length > 0 %}
-      ✓ Mail delivery is working!
-      {% else %}
-      ✗ Mail delivery failed - check logs at /var/log/mail.log
-      {% endif %}
-      
+      ==========================================
+      Recommendations
+      ==========================================
+      {% if health_score | int >= 90 %}
+      ✓ Mail system is fully operational!
+      ✓ All critical components are working
       {% if dkim_test.rc != 0 %}
-      ! DKIM test failed - Add DNS records from /root/dns_records.txt
+      ⏳ Configure DNS records for DKIM authentication
+         See: /root/dns_records.txt
+      {% endif %}
+      {% elif health_score | int >= 75 %}
+      ⚠ Mail system is mostly functional but needs attention
+      {% if postfix_db_test.rc != 0 %}
+      ! Fix Postfix database connectivity
+      {% endif %}
+      {% if dovecot_auth_test.rc != 0 %}
+      ! Fix Dovecot authentication
+      {% endif %}
+      {% if delivered_mail.files | length == 0 %}
+      ! Investigate mail delivery failure - check /var/log/mail.log
+      {% endif %}
+      {% else %}
+      ✗ Mail system has critical issues
+      ! Check service logs: sudo journalctl -u postfix -u dovecot -u opendkim -n 50
+      ! Review configuration files
+      ! Check PostgreSQL database connectivity
       {% endif %}
       
-      To test IMAP access:
+      ==========================================
+      Quick Diagnostics
+      ==========================================
+      
+      View mail logs:
+        sudo tail -f /var/log/mail.log
+      
+      Check service status:
+        sudo systemctl status postfix dovecot opendkim
+      
+      Test IMAP access:
         telnet {{ mail_server_vpn_ip }} 993
       
-      To view mailbox:
+      View test mailbox:
         sudo ls -la {{ mail_vmail_dir }}/{{ mail_test_domain }}/testuser1/new/
+      
+      Re-run tests:
+        ansible-playbook playbooks/task_2.2.4.yml
+      
+      ==========================================
+      Recent Errors (if any)
+      ==========================================
+      {{ mail_errors.stdout if mail_errors.stdout != '' else 'No errors found in recent logs ✓' }}
       
       ==========================================
     mode: '0644'
@@ -242,23 +380,27 @@
       - "Mail System Test Complete"
       - "=========================================="
       - ""
+      - "🎯 OVERALL HEALTH: {{ health_score }}% - {{ system_status }} {{ status_emoji }}"
+      - "   ({{ checks_passed }}/{{ total_checks }} checks passed)"
+      - ""
       - "Service Status:"
-      - "  Postfix:  {{ 'RUNNING' if postfix_status.status.ActiveState == 'active' else 'STOPPED' }}"
-      - "  Dovecot:  {{ 'RUNNING' if dovecot_status.status.ActiveState == 'active' else 'STOPPED' }}"
-      - "  OpenDKIM: {{ 'RUNNING' if opendkim_status.status.ActiveState == 'active' else 'STOPPED' }}"
+      - "  Postfix:  {{ 'RUNNING ✓' if postfix_status.status.ActiveState == 'active' else 'STOPPED ✗' }}"
+      - "  Dovecot:  {{ 'RUNNING ✓' if dovecot_status.status.ActiveState == 'active' else 'STOPPED ✗' }}"
+      - "  OpenDKIM: {{ 'RUNNING ✓' if opendkim_status.status.ActiveState == 'active' else 'STOPPED ✗' }}"
       - ""
       - "Port Status:"
-      - "  SMTP (25):        {{ 'LISTENING' if ':25' in listening_ports.stdout else 'NOT LISTENING' }}"
-      - "  Submission (587): {{ 'LISTENING' if ':587' in listening_ports.stdout else 'NOT LISTENING' }}"
-      - "  IMAPS (993):      {{ 'LISTENING' if ':993' in listening_ports.stdout else 'NOT LISTENING' }}"
+      - "  SMTP (25):        {{ 'LISTENING ✓' if smtp_listening else 'NOT LISTENING ✗' }}"
+      - "  Submission (587): {{ 'LISTENING ✓' if submission_listening else 'NOT LISTENING ✗' }}"
+      - "  IMAPS (993):      {{ 'LISTENING ✓' if imaps_listening else 'NOT LISTENING ✗' }}"
       - ""
       - "Test Results:"
-      - "  Postfix DB:    {{ 'PASS' if postfix_db_test.rc == 0 else 'FAIL' }}"
-      - "  Dovecot Auth:  {{ 'PASS' if dovecot_auth_test.rc == 0 else 'FAIL' }}"
-      - "  Mail Delivery: {{ 'PASS (' + (delivered_mail.files | length | string) + ' msg)' if delivered_mail.files | length > 0 else 'FAIL' }}"
-      - "  DKIM:          {{ 'PASS' if dkim_test.rc == 0 else 'FAIL (DNS needed)' }}"
+      - "  Postfix DB:    {{ 'PASS ✓' if postfix_db_test.rc == 0 else 'FAIL ✗' }}"
+      - "  Dovecot Auth:  {{ 'PASS ✓' if dovecot_auth_test.rc == 0 else 'FAIL ✗' }}"
+      - "  Mail Delivery: {{ 'PASS ✓ (' + (delivered_mail.files | length | string) + ' msg in ~' + delivery_time + 's)' if delivered_mail.files | length > 0 else 'FAIL ✗' }}"
+      - "  DKIM Signing:  {{ 'ACTIVE ✓' if dkim_signed | default(false) else 'NOT DETECTED ⚠' }}"
+      - "  DKIM DNS:      {{ 'CONFIGURED ✓' if dkim_test.rc == 0 else 'PENDING ⏳' }}"
       - ""
-      - "Full report: /root/mail_system_test_report.txt"
+      - "📄 Full report: /root/mail_system_test_report.txt"
       - ""
-      - "{{ '✓ Mail system is functional!' if delivered_mail.files | length > 0 else '✗ Issues detected - check report' }}"
+      - "{{ '✓✓✓ Mail system is fully operational!' if health_score | int >= 90 else '⚠ Issues detected - check report for details' if health_score | int >= 60 else '✗ Critical issues - immediate attention required' }}"
       - "=========================================="

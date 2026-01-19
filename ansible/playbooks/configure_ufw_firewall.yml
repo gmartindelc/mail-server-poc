@@ -1,0 +1,310 @@
+---
+# Reusable Playbook: Configure UFW Firewall
+# 
+# Purpose: Configure firewall based on planning.md architecture
+# Network Architecture:
+#   Public services: SMTP (25), Submission (587), HTTP/HTTPS (80/443)
+#   VPN-only services: IMAPS (993), PostgreSQL (5432), SSH (2288)
+#   
+# Security model: Default deny, explicit allow
+
+- name: Install UFW if not present
+  ansible.builtin.apt:
+    name: ufw
+    state: present
+    update_cache: yes
+
+- name: Reset UFW to default state (clean slate)
+  ansible.builtin.ufw:
+    state: reset
+  when: ufw_reset | default(false)
+
+- name: Set UFW default policies
+  ansible.builtin.ufw:
+    direction: "{{ item.direction }}"
+    policy: "{{ item.policy }}"
+  loop:
+    - { direction: 'incoming', policy: 'deny' }
+    - { direction: 'outgoing', policy: 'allow' }
+    - { direction: 'routed', policy: 'deny' }
+
+- name: Allow loopback interface
+  ansible.builtin.ufw:
+    rule: allow
+    interface: lo
+    direction: in
+
+- name: Allow loopback interface (out)
+  ansible.builtin.ufw:
+    rule: allow
+    interface: lo
+    direction: out
+
+# ==========================================
+# PUBLIC SERVICES (from planning.md 3.2)
+# ==========================================
+
+- name: Allow SMTP (port 25) from anywhere
+  ansible.builtin.ufw:
+    rule: allow
+    port: '25'
+    proto: tcp
+    comment: 'SMTP - Inbound mail from internet'
+
+- name: Allow SMTP Submission (port 587) from anywhere
+  ansible.builtin.ufw:
+    rule: allow
+    port: '587'
+    proto: tcp
+    comment: 'SMTP Submission - Authenticated outbound mail'
+
+- name: Allow SMTPS (port 465) from anywhere (optional)
+  ansible.builtin.ufw:
+    rule: allow
+    port: '465'
+    proto: tcp
+    comment: 'SMTPS - Legacy submission over SSL'
+  when: allow_smtps | default(true)
+
+- name: Allow HTTP (port 80) for LetsEncrypt
+  ansible.builtin.ufw:
+    rule: allow
+    port: '80'
+    proto: tcp
+    comment: "HTTP - LetsEncrypt certificate validation"
+
+- name: Allow HTTPS (port 443) from anywhere
+  ansible.builtin.ufw:
+    rule: allow
+    port: '443'
+    proto: tcp
+    comment: "HTTPS - SOGo webmail (will be VPN-only later)"
+  when: allow_public_https | default(false)
+
+# ==========================================
+# VPN-ONLY SERVICES (from planning.md 3.2)
+# ==========================================
+
+- name: Allow IMAPS (port 993) from VPN only
+  ansible.builtin.ufw:
+    rule: allow
+    port: '993'
+    proto: tcp
+    from_ip: "{{ mail_server_vpn_network }}"
+    comment: 'IMAPS - VPN clients only'
+
+- name: Allow PostgreSQL (port 5432) from VPN only
+  ansible.builtin.ufw:
+    rule: allow
+    port: '5432'
+    proto: tcp
+    from_ip: "{{ mail_server_vpn_network }}"
+    comment: 'PostgreSQL - VPN services only'
+
+- name: Allow SSH (port 2288) from VPN only
+  ansible.builtin.ufw:
+    rule: allow
+    port: '2288'
+    proto: tcp
+    from_ip: "{{ mail_server_vpn_network }}"
+    comment: 'SSH - Bastion server only'
+
+- name: Allow HTTPS (port 443) from VPN only for SOGo
+  ansible.builtin.ufw:
+    rule: allow
+    port: '443'
+    proto: tcp
+    from_ip: "{{ mail_server_vpn_network }}"
+    comment: 'HTTPS - SOGo webmail VPN access'
+  when: not (allow_public_https | default(false))
+
+# ==========================================
+# WIREGUARD VPN
+# ==========================================
+
+- name: Allow WireGuard VPN (port 51820) - if not already configured
+  ansible.builtin.ufw:
+    rule: allow
+    port: '51820'
+    proto: udp
+    comment: 'WireGuard VPN'
+  when: allow_wireguard_port | default(false)
+
+# ==========================================
+# OPTIONAL: Monitoring & Admin
+# ==========================================
+
+- name: Allow Wazuh agent (port 1514/1515) from VPN
+  ansible.builtin.ufw:
+    rule: allow
+    port: "{{ item }}"
+    proto: tcp
+    from_ip: "{{ mail_server_vpn_network }}"
+    comment: 'Wazuh agent communication'
+  loop:
+    - '1514'
+    - '1515'
+  when: allow_wazuh | default(false)
+
+# ==========================================
+# RATE LIMITING (Anti-bruteforce)
+# ==========================================
+
+- name: Rate limit SSH connections
+  ansible.builtin.ufw:
+    rule: limit
+    port: '2288'
+    proto: tcp
+    comment: 'SSH rate limiting'
+
+- name: Rate limit SMTP Submission
+  ansible.builtin.ufw:
+    rule: limit
+    port: '587'
+    proto: tcp
+    comment: 'SMTP Submission rate limiting'
+
+# ==========================================
+# ENABLE UFW
+# ==========================================
+
+- name: Enable UFW firewall
+  ansible.builtin.ufw:
+    state: enabled
+
+- name: Ensure UFW is enabled at boot
+  ansible.builtin.systemd:
+    name: ufw
+    enabled: yes
+
+# ==========================================
+# VERIFICATION
+# ==========================================
+
+- name: Get UFW status
+  ansible.builtin.command:
+    cmd: ufw status verbose
+  register: ufw_status
+  changed_when: false
+
+- name: Display UFW status
+  ansible.builtin.debug:
+    msg: "{{ ufw_status.stdout_lines }}"
+
+- name: Get UFW rules list
+  ansible.builtin.command:
+    cmd: ufw status numbered
+  register: ufw_rules
+  changed_when: false
+
+- name: Save UFW configuration summary
+  ansible.builtin.copy:
+    dest: /root/ufw_firewall_config.txt
+    content: |
+      ==========================================
+      UFW Firewall Configuration
+      ==========================================
+      
+      Date: {{ ansible_date_time.iso8601 }}
+      Server: {{ mail_server_hostname }}
+      VPN Network: {{ mail_server_vpn_network }}
+      
+      ==========================================
+      Network Architecture (from planning.md)
+      ==========================================
+      
+      PUBLIC SERVICES (from anywhere):
+      --------------------------------
+      Port 25   (TCP) - SMTP - Inbound mail
+      Port 587  (TCP) - SMTP Submission - Authenticated outbound
+      Port 465  (TCP) - SMTPS - Legacy submission over SSL
+      Port 80   (TCP) - HTTP - Let's Encrypt validation
+      
+      VPN-ONLY SERVICES ({{ mail_server_vpn_network }}):
+      ------------------------------------------------
+      Port 993  (TCP) - IMAPS - Email client access
+      Port 5432 (TCP) - PostgreSQL - Database access
+      Port 2288 (TCP) - SSH - Administrative access
+      Port 443  (TCP) - HTTPS - SOGo webmail
+      
+      RATE LIMITED:
+      -------------
+      Port 2288 - SSH (prevents brute force)
+      Port 587  - SMTP Submission (prevents abuse)
+      
+      ==========================================
+      Current UFW Status
+      ==========================================
+      
+      {{ ufw_status.stdout }}
+      
+      ==========================================
+      Detailed Rules
+      ==========================================
+      
+      {{ ufw_rules.stdout }}
+      
+      ==========================================
+      Security Notes
+      ==========================================
+      
+      ✓ Default deny incoming (except explicitly allowed)
+      ✓ Default allow outgoing
+      ✓ VPN-only access for internal services
+      ✓ Rate limiting on SSH and SMTP Submission
+      ✓ Loopback interface allowed
+      
+      To modify rules:
+        sudo ufw status numbered
+        sudo ufw delete [number]
+        sudo ufw allow from {{ mail_server_vpn_network }} to any port [PORT]
+      
+      To temporarily disable:
+        sudo ufw disable
+      
+      To re-enable:
+        sudo ufw enable
+      
+      ==========================================
+    mode: '0644'
+    owner: root
+    group: root
+
+- name: Display completion summary
+  ansible.builtin.debug:
+    msg:
+      - "=========================================="
+      - "UFW Firewall Configuration Complete"
+      - "=========================================="
+      - ""
+      - "✓ UFW firewall enabled and configured"
+      - "✓ Default policy: DENY incoming, ALLOW outgoing"
+      - ""
+      - "PUBLIC SERVICES:"
+      - "  ✓ SMTP (25) - Inbound mail from internet"
+      - "  ✓ SMTP Submission (587) - Authenticated outbound"
+      - "  {{ '✓ SMTPS (465) - Legacy submission' if allow_smtps | default(true) else '✗ SMTPS (465) - Not enabled' }}"
+      - "  ✓ HTTP (80) - Let's Encrypt validation"
+      - ""
+      - "VPN-ONLY SERVICES ({{ mail_server_vpn_network }}):"
+      - "  ✓ IMAPS (993) - Email client access"
+      - "  ✓ PostgreSQL (5432) - Database access"
+      - "  ✓ SSH (2288) - Administrative access"
+      - "  ✓ HTTPS (443) - SOGo webmail"
+      - ""
+      - "RATE LIMITING:"
+      - "  ✓ SSH (2288) - Brute force protection"
+      - "  ✓ SMTP Submission (587) - Abuse prevention"
+      - ""
+      - "Configuration saved to: /root/ufw_firewall_config.txt"
+      - ""
+      - "Verify firewall:"
+      - "  sudo ufw status verbose"
+      - "  sudo ufw status numbered"
+      - ""
+      - "Test VPN access:"
+      - "  From VPN: telnet {{ mail_server_vpn_ip }} 993"
+      - "  From VPN: telnet {{ mail_server_vpn_ip }} 5432"
+      - ""
+      - "Architecture compliant with planning.md Section 3.2"
+      - "=========================================="

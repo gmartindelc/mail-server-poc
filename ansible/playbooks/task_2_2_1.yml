@@ -1,0 +1,26 @@
+---
+# Task 2.2.1: Install and Configure Postfix MTA
+# 
+# Purpose: Deploy Postfix mail transfer agent with PostgreSQL integration
+# - Install Postfix package
+# - Configure basic SMTP settings
+# - Set up PostgreSQL virtual domain support
+# - Configure submission port (587)
+# - Set up mail directories
+#
+# Usage: ./run_task.sh 2.2.1
+# Or: ansible-playbook playbooks/task_2_2_1.yml
+
+- name: Task 2.2.1 - Install and Configure Postfix MTA
+  hosts: mail_servers
+  become: yes
+  gather_facts: yes
+  
+  tasks:
+    - name: Include Postfix installation playbook
+      ansible.builtin.include_tasks:
+        file: install_postfix.yml
+      tags:
+        - postfix
+        - mail
+        - mta

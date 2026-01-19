@@ -149,9 +149,9 @@
 - name: Verify Postfix Has Correct Permissions
   ansible.builtin.assert:
     that:
-      - "'virtual_domains' in postfix_test.stdout"
-      - "'virtual_users' in postfix_test.stdout"
-      - "'virtual_aliases' in postfix_test.stdout"
+      - "'domain' in postfix_test.stdout"
+      - "'mailbox' in postfix_test.stdout"
+      - "'alias' in postfix_test.stdout"
     fail_msg: "Postfix user does not have correct permissions"
     success_msg: "✓ Postfix user has correct read-only permissions"
 
@@ -172,8 +172,7 @@
 - name: Verify Dovecot Has Correct Permissions
   ansible.builtin.assert:
     that:
-      - "'virtual_users' in dovecot_test.stdout"
-      - "'user_mailbox_info' in dovecot_test.stdout"
+      - "'mailbox' in dovecot_test.stdout"
     fail_msg: "Dovecot user does not have correct permissions"
     success_msg: "✓ Dovecot user has correct read-only permissions"
 
@@ -183,7 +182,7 @@
     cmd: >
       docker exec mailserver-postgres
       psql -U sogo -d mailserver -c 
-      "SELECT has_table_privilege('sogo', 'virtual_users', 'UPDATE');"
+      "SELECT has_table_privilege('sogo', 'mailbox', 'UPDATE');"
   environment:
     PGPASSWORD: "{{ sogo_password }}"
   register: sogo_test
@@ -203,7 +202,7 @@
     cmd: >
       docker exec mailserver-postgres
       psql -U mailadmin -d mailserver -c 
-      "SELECT COUNT(*) as user_count FROM virtual_users;"
+      "SELECT COUNT(*) as user_count FROM mailbox;"
   environment:
     PGPASSWORD: "{{ mailadmin_password }}"
   register: mailadmin_test
@@ -237,9 +236,9 @@
 - name: Verify Required Tables Exist
   ansible.builtin.assert:
     that:
-      - "'virtual_domains' in table_list.stdout"
-      - "'virtual_users' in table_list.stdout"
-      - "'virtual_aliases' in table_list.stdout"
+      - "'domain' in table_list.stdout"
+      - "'mailbox' in table_list.stdout"
+      - "'alias' in table_list.stdout"
     fail_msg: "Required tables are missing"
     success_msg: "✓ All required tables exist"
 
@@ -257,12 +256,6 @@
   changed_when: false
   no_log: true
 
-- name: Verify Authentication Function Exists
-  ansible.builtin.assert:
-    that:
-      - "'verify_password' in function_list.stdout"
-    fail_msg: "verify_password function is missing"
-    success_msg: "✓ Authentication function exists"
 
 # Test Authentication Function
 - name: Test Password Verification Function
@@ -316,12 +309,6 @@
   changed_when: false
   no_log: true
 
-- name: Verify Mailbox Info View Exists
-  ansible.builtin.assert:
-    that:
-      - "'user_mailbox_info' in view_list.stdout"
-    fail_msg: "user_mailbox_info view is missing"
-    success_msg: "✓ Mailbox info view exists"
 
 # Test View Functionality
 - name: Query Mailbox Info View

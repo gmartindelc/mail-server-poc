@@ -193,8 +193,8 @@
         TABLE_COUNT=$(docker exec mailserver-postgres psql -U postgres -d "$DATABASE" -t -c "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = 'public';")
         echo "  Tables restored: $TABLE_COUNT"
         
-        USER_COUNT=$(docker exec mailserver-postgres psql -U postgres -d "$DATABASE" -t -c "SELECT COUNT(*) FROM virtual_users;" 2>/dev/null || echo "0")
-        echo "  Virtual users: $USER_COUNT"
+        USER_COUNT=$(docker exec mailserver-postgres psql -U postgres -d "$DATABASE" -t -c "SELECT COUNT(*) FROM mailbox;" 2>/dev/null || echo "0")
+        echo "  Mailboxes: $USER_COUNT"
         
         echo ""
         echo -e "${GREEN}Restore completed successfully${NC}"
@@ -499,7 +499,7 @@
       4. **Verify restore:**
          ```bash
          docker exec mailserver-postgres psql -U postgres -d mailserver -c "\dt"
-         docker exec mailserver-postgres psql -U postgres -d mailserver -c "SELECT COUNT(*) FROM virtual_users;"
+         docker exec mailserver-postgres psql -U postgres -d mailserver -c "SELECT COUNT(*) FROM mailbox;"
          ```
       
       ### Point-in-Time Recovery (PITR)

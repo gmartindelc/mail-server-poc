@@ -8,10 +8,11 @@
 # - Integrate with Postfix
 # - Document DNS records
 #
-# Usage: ansible-playbook playbooks/task_2.2.3.yml
+# Usage: ./run_task.sh 2.2.3
+# Or: ansible-playbook playbooks/task_2_2_3.yml
 
 - name: Task 2.2.3 - Configure SPF/DKIM/DMARC
-  hosts: all
+  hosts: mail_servers
   become: yes
   gather_facts: yes
   

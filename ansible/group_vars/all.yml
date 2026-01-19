@@ -27,7 +27,8 @@ postgres_postfix_user: "postfix_user"
 postgres_dovecot_user: "dovecot_user"
 postgres_sogo_user: "sogo_user"
 
-# Database Table Names
+# Database Table Names (actual schema from Task 2.1.2)
+# Note: These are the actual table names, not the virtual_* variants
 postgres_table_mailbox: "mailbox"
 postgres_table_alias: "alias"
 postgres_table_domain: "domain"

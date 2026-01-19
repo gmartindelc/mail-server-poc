@@ -1,5 +1,5 @@
 # Playbook: Configure Mail Server Database Schema and Users
-# Task: 2.1.2 - Simplified version to avoid SQL parsing issues
+# Task: 2.1.2 - Align with reset_postgresql_mail_schema.yml (Dovecot 2.4 compatible)
 
 - name: Load PostgreSQL configuration
   ansible.builtin.set_fact:
@@ -10,90 +10,107 @@
       admin_user: "{{ postgres_admin_user }}"
       container_name: "{{ postgres_container_name }}"
 
-- name: Generate passwords for service users
+- name: Generate password for Postfix user
   ansible.builtin.shell: openssl rand -base64 24 | tr -d '/+=' | head -c 32
   register: postfix_password
   changed_when: false
   no_log: true
 
-- name: Create Postfix tables and users
+- name: Create schema and Postfix user (domain/mailbox/alias)
   ansible.builtin.shell: |
-    # Create postfix user
-    docker exec {{ postgres_config.container_name }} psql -U {{ postgres_config.admin_user }} -c "CREATE USER IF NOT EXISTS {{ postgres_postfix_user }} WITH ENCRYPTED PASSWORD '{{ postfix_password.stdout }}';"
-    
-    # Connect to database and create tables
-    docker exec {{ postgres_config.container_name }} psql -U {{ postgres_config.admin_user }} -d {{ postgres_config.db_name }} <<EOF
-    -- Create Postfix virtual_domains table
-    CREATE TABLE IF NOT EXISTS virtual_domains (
-      id SERIAL PRIMARY KEY,
-      name VARCHAR(255) NOT NULL UNIQUE,
-      description TEXT,
-      active BOOLEAN DEFAULT true,
-      created TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-      updated TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    # Create postfix user (if not exists)
+    docker exec {{ postgres_config.container_name }} \
+      psql -U {{ postgres_config.admin_user }} -c \
+      "DO $$ BEGIN IF NOT EXISTS (SELECT FROM pg_catalog.pg_roles WHERE rolname = '{{ postgres_postfix_user }}') THEN CREATE USER {{ postgres_postfix_user }} WITH ENCRYPTED PASSWORD '{{ postfix_password.stdout }}'; END IF; END $$;"
+
+    # Create schema (domain, mailbox, alias) and basic grants
+    docker exec {{ postgres_config.container_name }} bash -c "psql -U {{ postgres_config.admin_user }} -d {{ postgres_config.db_name }} <<'EOSQL'
+    -- ==========================================
+    -- Mail Server Database Schema
+    -- Compatible with Postfix + Dovecot 2.4
+    -- ==========================================
+
+    -- Domain table
+    CREATE TABLE IF NOT EXISTS domain (
+        domain VARCHAR(255) PRIMARY KEY,
+        description TEXT,
+        aliases INTEGER DEFAULT 0,
+        mailboxes INTEGER DEFAULT 0,
+        maxquota BIGINT DEFAULT 0,
+        quota BIGINT DEFAULT 0,
+        transport VARCHAR(255) DEFAULT 'virtual',
+        backupmx BOOLEAN DEFAULT false,
+        active BOOLEAN DEFAULT true,
+        created TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        modified TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     );
-    
-    -- Create Postfix virtual_users table
-    CREATE TABLE IF NOT EXISTS virtual_users (
-      id SERIAL PRIMARY KEY,
-      domain_id INTEGER NOT NULL,
-      email VARCHAR(255) NOT NULL UNIQUE,
-      password VARCHAR(255) NOT NULL,
-      quota BIGINT DEFAULT 0,
-      active BOOLEAN DEFAULT true,
-      created TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-      updated TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+
+    -- Mailbox table (virtual users)
+    CREATE TABLE IF NOT EXISTS mailbox (
+        username VARCHAR(255) PRIMARY KEY,
+        password VARCHAR(255) NOT NULL,
+        name VARCHAR(255),
+        maildir VARCHAR(255) NOT NULL,
+        quota BIGINT DEFAULT 0,
+        local_part VARCHAR(255),
+        domain VARCHAR(255),
+        active BOOLEAN DEFAULT true,
+        created TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        modified TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        CONSTRAINT fk_mailbox_domain FOREIGN KEY (domain) REFERENCES domain(domain) ON DELETE CASCADE
     );
-    
-    -- Create Postfix virtual_aliases table
-    CREATE TABLE IF NOT EXISTS virtual_aliases (
-      id SERIAL PRIMARY KEY,
-      domain_id INTEGER NOT NULL,
-      source VARCHAR(255) NOT NULL,
-      destination TEXT NOT NULL,
-      active BOOLEAN DEFAULT true,
-      created TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-      updated TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+
+    -- Alias table
+    CREATE TABLE IF NOT EXISTS alias (
+        address VARCHAR(255) PRIMARY KEY,
+        goto TEXT NOT NULL,
+        domain VARCHAR(255),
+        active BOOLEAN DEFAULT true,
+        created TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        modified TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        CONSTRAINT fk_alias_domain FOREIGN KEY (domain) REFERENCES domain(domain) ON DELETE CASCADE
     );
-    
-    -- Insert test domain
-    INSERT INTO virtual_domains (name, description)
-    SELECT '{{ mail_test_domain }}', 'Test Domain'
-    WHERE NOT EXISTS (SELECT 1 FROM virtual_domains WHERE name = '{{ mail_test_domain }}');
-    
-    -- Insert test user
-    INSERT INTO virtual_users (domain_id, email, password)
-    SELECT 
-      (SELECT id FROM virtual_domains WHERE name = '{{ mail_test_domain }}'),
+
+    -- Create indexes for performance
+    CREATE INDEX IF NOT EXISTS idx_mailbox_domain ON mailbox(domain);
+    CREATE INDEX IF NOT EXISTS idx_mailbox_active ON mailbox(active);
+    CREATE INDEX IF NOT EXISTS idx_alias_domain ON alias(domain);
+    CREATE INDEX IF NOT EXISTS idx_alias_active ON alias(active);
+    CREATE INDEX IF NOT EXISTS idx_domain_active ON domain(active);
+
+    -- Grant permissions to service users (Postfix gets SELECT; Dovecot/SOGo handled later)
+    GRANT SELECT ON domain, mailbox, alias TO {{ postgres_postfix_user }};
+
+    -- Insert test data (idempotent)
+    INSERT INTO domain (domain, description, active)
+    SELECT '{{ mail_test_domain }}', 'Test Domain', true
+    WHERE NOT EXISTS (SELECT 1 FROM domain WHERE domain = '{{ mail_test_domain }}');
+
+    -- Insert test user (password placeholder: replace in production)
+    INSERT INTO mailbox (username, password, name, maildir, domain, local_part, active)
+    SELECT
       '{{ mail_test_email }}',
-      '{SHA512-CRYPT}\$6\$salt\$placeholder'
-    WHERE NOT EXISTS (SELECT 1 FROM virtual_users WHERE email = '{{ mail_test_email }}');
-    
+      '{SHA512-CRYPT}$6$rounds=5000$saltsaltsaltsalt$8GNYvG0xZ0F3xQc9xhXQv0V6kzJhXYHUy8L8EgZJnQCQv9W3LYqKxQ6GnLPY3vvNnXWqKYGLQxQHvYGLnKWGH.',
+      'Test User',
+      '{{ mail_test_domain }}/{{ mail_test_username }}/',
+      '{{ mail_test_domain }}',
+      '{{ mail_test_username }}',
+      true
+    WHERE NOT EXISTS (SELECT 1 FROM mailbox WHERE username = '{{ mail_test_email }}');
+
     -- Insert test alias
-    INSERT INTO virtual_aliases (domain_id, source, destination)
-    SELECT 
-      (SELECT id FROM virtual_domains WHERE name = '{{ mail_test_domain }}'),
+    INSERT INTO alias (address, goto, domain, active)
+    SELECT
       '{{ mail_test_alias }}',
-      '{{ mail_test_email }}'
-    WHERE NOT EXISTS (SELECT 1 FROM virtual_aliases WHERE source = '{{ mail_test_alias }}');
-    
-    -- Grant permissions
-    GRANT SELECT ON virtual_domains, virtual_users, virtual_aliases TO {{ postgres_postfix_user }};
-    
-    -- Create indexes
-    CREATE INDEX IF NOT EXISTS idx_virtual_users_email ON virtual_users(email);
-    CREATE INDEX IF NOT EXISTS idx_virtual_users_domain_id ON virtual_users(domain_id);
-    CREATE INDEX IF NOT EXISTS idx_virtual_aliases_source ON virtual_aliases(source);
-    CREATE INDEX IF NOT EXISTS idx_virtual_aliases_domain_id ON virtual_aliases(domain_id);
-    EOF
-    
-    # Add foreign keys (try-catch approach)
-    docker exec {{ postgres_config.container_name }} psql -U {{ postgres_config.admin_user }} -d {{ postgres_config.db_name }} -c "ALTER TABLE virtual_users ADD CONSTRAINT fk_virtual_users_domain FOREIGN KEY (domain_id) REFERENCES virtual_domains(id) ON DELETE CASCADE;" 2>/dev/null || true
-    docker exec {{ postgres_config.container_name }} psql -U {{ postgres_config.admin_user }} -d {{ postgres_config.db_name }} -c "ALTER TABLE virtual_aliases ADD CONSTRAINT fk_virtual_aliases_domain FOREIGN KEY (domain_id) REFERENCES virtual_domains(id) ON DELETE CASCADE;" 2>/dev/null || true
+      '{{ mail_test_email }}',
+      '{{ mail_test_domain }}',
+      true
+    WHERE NOT EXISTS (SELECT 1 FROM alias WHERE address = '{{ mail_test_alias }}');
+    EOSQL"
   args:
     executable: /bin/bash
-  register: create_postfix_schema
-  changed_when: create_postfix_schema.rc == 0
+  register: create_mail_schema
+  changed_when: create_mail_schema.rc == 0
   no_log: true
 
 - name: Generate password for Dovecot user
@@ -102,11 +119,15 @@
   changed_when: false
   no_log: true
 
-- name: Create Dovecot database user
+- name: Create Dovecot database user and grant access
   ansible.builtin.shell: |
-    docker exec {{ postgres_config.container_name }} psql -U {{ postgres_config.admin_user }} -c "CREATE USER IF NOT EXISTS {{ postgres_dovecot_user }} WITH ENCRYPTED PASSWORD '{{ dovecot_password.stdout }}';"
-    
-    docker exec {{ postgres_config.container_name }} psql -U {{ postgres_config.admin_user }} -d {{ postgres_config.db_name }} -c "GRANT SELECT ON {{ postgres_table_mailbox }}, {{ postgres_table_alias }}, {{ postgres_table_domain }} TO {{ postgres_dovecot_user }};"
+    docker exec {{ postgres_config.container_name }} \
+      psql -U {{ postgres_config.admin_user }} -c \
+      "DO $$ BEGIN IF NOT EXISTS (SELECT FROM pg_catalog.pg_roles WHERE rolname = '{{ postgres_dovecot_user }}') THEN CREATE USER {{ postgres_dovecot_user }} WITH ENCRYPTED PASSWORD '{{ dovecot_password.stdout }}'; END IF; END $$;"
+
+    docker exec {{ postgres_config.container_name }} \
+      psql -U {{ postgres_config.admin_user }} -d {{ postgres_config.db_name }} -c \
+      "GRANT SELECT ON domain, mailbox, alias TO {{ postgres_dovecot_user }};"
   args:
     executable: /bin/bash
   no_log: true
@@ -117,11 +138,15 @@
   changed_when: false
   no_log: true
 
-- name: Create SOGo database user
+- name: Create SOGo database user and grant access
   ansible.builtin.shell: |
-    docker exec {{ postgres_config.container_name }} psql -U {{ postgres_config.admin_user }} -c "CREATE USER IF NOT EXISTS {{ postgres_sogo_user }} WITH ENCRYPTED PASSWORD '{{ sogo_password.stdout }}';"
-    
-    docker exec {{ postgres_config.container_name }} psql -U {{ postgres_config.admin_user }} -d {{ postgres_config.db_name }} -c "GRANT SELECT ON {{ postgres_table_mailbox }}, {{ postgres_table_alias }}, {{ postgres_table_domain }} TO {{ postgres_sogo_user }};"
+    docker exec {{ postgres_config.container_name }} \
+      psql -U {{ postgres_config.admin_user }} -c \
+      "DO $$ BEGIN IF NOT EXISTS (SELECT FROM pg_catalog.pg_roles WHERE rolname = '{{ postgres_sogo_user }}') THEN CREATE USER {{ postgres_sogo_user }} WITH ENCRYPTED PASSWORD '{{ sogo_password.stdout }}'; END IF; END $$;"
+
+    docker exec {{ postgres_config.container_name }} \
+      psql -U {{ postgres_config.admin_user }} -d {{ postgres_config.db_name }} -c \
+      "GRANT SELECT, INSERT, UPDATE, DELETE ON domain, mailbox, alias TO {{ postgres_sogo_user }};"
   args:
     executable: /bin/bash
   no_log: true
@@ -142,7 +167,7 @@
       hosts = {{ postgres_host }}
       port = {{ postgres_port }}
       dbname = {{ postgres_db }}
-      query = SELECT name FROM virtual_domains WHERE name='%s' AND active=true
+      query = SELECT domain FROM domain WHERE domain='%s' AND active=true
     dest: "{{ mail_server_config_dir }}/postfix/sql/virtual-domains.cf"
     mode: '0640'
     owner: root
@@ -157,7 +182,7 @@
       hosts = {{ postgres_host }}
       port = {{ postgres_port }}
       dbname = {{ postgres_db }}
-      query = SELECT email FROM virtual_users WHERE email='%s' AND active=true
+      query = SELECT maildir FROM mailbox WHERE username='%s' AND active=true
     dest: "{{ mail_server_config_dir }}/postfix/sql/virtual-users.cf"
     mode: '0640'
     owner: root
@@ -172,7 +197,7 @@
       hosts = {{ postgres_host }}
       port = {{ postgres_port }}
       dbname = {{ postgres_db }}
-      query = SELECT destination FROM virtual_aliases WHERE source='%s' AND active=true
+      query = SELECT goto FROM alias WHERE address='%s' AND active=true
     dest: "{{ mail_server_config_dir }}/postfix/sql/virtual-aliases.cf"
     mode: '0640'
     owner: root
@@ -183,20 +208,19 @@
   ansible.builtin.shell: |
     docker exec {{ postgres_config.container_name }} \
       psql -U {{ postgres_config.admin_user }} -d {{ postgres_config.db_name }} \
-      -c "SELECT '✅ Postfix tables created' as status; SELECT table_name FROM information_schema.tables WHERE table_name LIKE 'virtual_%' AND table_schema = 'public';"
+      -c "SELECT '✅ Mail tables created' as status; SELECT table_name FROM information_schema.tables WHERE table_name IN ('domain','mailbox','alias') AND table_schema = 'public';"
   register: db_test
   changed_when: false
 
 - name: Display completion summary
   ansible.builtin.debug:
     msg:
-      - "✅ Task 2.1.2 Complete - Database Schema Configured"
+      - "✅ Task 2.1.2 Complete - Database Schema Configured (domain/mailbox/alias)"
       - ""
-      - "Created Postfix tables: virtual_domains, virtual_users, virtual_aliases"
+      - "Created tables: domain, mailbox, alias"
       - "Created database users: {{ postgres_postfix_user }}, {{ postgres_dovecot_user }}, {{ postgres_sogo_user }}"
       - "Inserted test data for domain: {{ mail_test_domain }}"
       - "Created Postfix SQL configs in: {{ mail_server_config_dir }}/postfix/sql/"
       - ""
       - "Database test results:"
       - "{{ db_test.stdout }}"
-      

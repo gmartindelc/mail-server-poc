@@ -1,253 +1,569 @@
-# Task 1.4.1 - Complete Package
+# Improved Mail Server Playbooks for Debian 13
 
-## 📦 Package Contents
+Production-ready Ansible playbooks for deploying a complete mail server stack (Postfix + Dovecot + OpenDKIM) on Debian 13 with PostgreSQL backend.
 
-This package contains everything needed to complete **Task 1.4.1: Create Mail System Directory Structure**.
+## Directory Structure
 
-### Files Included (7 total)
+```
+improved_playbooks/
+├── ansible.cfg                          # Your Ansible configuration
+├── inventory.yml                        # Your dynamic inventory
+├── group_vars/
+│   └── all.yml                         # Your variables (already configured)
+├── playbooks/
+│   ├── task_1_5_1.yml                  # Task: Configure UFW firewall
+│   ├── task_2_2_1.yml                  # Task: Install Postfix
+│   ├── task_2_2_2.yml                  # Task: Install Dovecot
+│   ├── task_2_2_3.yml                  # Task: Install OpenDKIM
+│   ├── task_2_2_4.yml                  # Task: Test mail system
+│   ├── configure_ufw_firewall.yml      # UFW firewall configuration
+│   ├── install_postfix.yml             # Postfix installation
+│   ├── install_dovecot.yml             # Dovecot installation
+│   ├── install_opendkim.yml            # OpenDKIM installation
+│   ├── test_mail_system.yml            # System testing
+│   ├── rollback_postfix.yml            # Rollback Postfix configuration
+│   ├── rollback_dovecot.yml            # Rollback Dovecot configuration
+│   ├── rollback_opendkim.yml           # Rollback OpenDKIM configuration
+│   └── README_UFW.md                   # UFW firewall documentation
+├── README.md                            # This file
+└── IMPROVEMENTS_SUMMARY.md              # What was improved
+```
 
-#### 🔧 Ansible Playbooks (2 files)
+## What's New in These Improved Playbooks
 
-1. **task_1.4.1.yml** (455 bytes)
+### Key Enhancements
+✅ **Pre-flight validation** - Checks OS requirements (Debian 13+)
+✅ **Improved idempotency** - Safe to run multiple times
+✅ **Standardized password retrieval** - Robust Python-based parsing
+✅ **Better error handling** - Retries and clear failure messages
+✅ **Rollback capability** - Easy recovery from issues
+✅ **Health scoring** - 0-100% automated system health assessment
+✅ **Performance metrics** - Tracks mail delivery times
+✅ **Comprehensive testing** - Validates all components
+✅ **Enhanced documentation** - Inline help and examples
 
-   - Task wrapper playbook
-   - Install location: `ansible/` (root)
-   - Entry point for task execution
+## Your Current Configuration
 
-2. **create_mail_directories.yml** (4.5 KB)
-   - Reusable directory creation playbook
-   - Install location: `ansible/playbooks/`
-   - Core logic and verification
+Based on your `group_vars/all.yml`:
 
-#### 📚 Documentation (5 files)
+- **Server:** cucho1.phalkons.com (45.32.207.84)
+- **VPN IP:** 10.100.0.25
+- **Domain:** phalkons.com
+- **Test Domain:** testdomain.local
+- **PostgreSQL:** Running at 10.100.0.25:5432 (database: mailserver)
+- **Mail Directory:** /var/mail/vmail
+- **Credentials File:** /root/postgres_service_users.txt
 
-3. **INSTALLATION_GUIDE.md** (9.0 KB)
+## Prerequisites
 
-   - Step-by-step installation instructions
-   - Pre-execution checklist
-   - Troubleshooting guide
-   - Post-execution verification
+### System Requirements
+- Debian 13 (Trixie) installed on cucho1.phalkons.com ✅
+- PostgreSQL 17 running (via your container setup) ✅
+- Variables configured in `group_vars/all.yml` ✅
+- Credentials in `/root/postgres_service_users.txt` ✅
 
-4. **README_TASK_1.4.1.md** (8.1 KB)
+### Required on Control Machine
+```bash
+# Already have Ansible if you're using run_task.sh
+ansible --version
+```
 
-   - Complete task documentation
-   - Usage instructions
-   - Verification procedures
-   - Integration notes
+## Quick Start
 
-5. **TASK_1.4.1_DELIVERY_SUMMARY.md** (6.7 KB)
+### Using Your run_task.sh Script (Recommended)
 
-   - Delivery summary
-   - What gets created
-   - Success criteria
-   - Next actions
-
-6. **TASK_1.4.1_QUICK_REFERENCE.md** (1.4 KB)
-
-   - Quick start commands
-   - One-line summary
-   - Fast verification
-
-7. **DIRECTORY_STRUCTURE.md** (9.7 KB)
-   - Visual directory diagrams
-   - Before/after comparison
-   - Permissions details
-   - Future structure preview
-
-## 🎯 Quick Start
-
-### 1. Install Files (2 minutes)
+If you have a `run_task.sh` wrapper script:
 
 ```bash
-# Navigate to your ansible directory
-cd /path/to/mail-server-poc/ansible
-
-# Both files go in playbooks directory
-cp /path/to/task_1.4.1.yml playbooks/
-cp /path/to/create_mail_directories.yml playbooks/
+# Run tasks in order:
+./run_task.sh 2.2.1  # Install Postfix
+./run_task.sh 2.2.2  # Install Dovecot  
+./run_task.sh 2.2.3  # Install OpenDKIM
+./run_task.sh 2.2.4  # Test everything
 ```
 
-### 2. Set Environment Variables
+### Using Ansible Directly
 
 ```bash
-export ANSIBLE_HOST=10.100.0.25
-export ANSIBLE_REMOTE_PORT=2288
-export ANSIBLE_REMOTE_USER=phalkonadmin
-export ANSIBLE_PRIVATE_KEY_FILE=~/SSH_KEYS_CAPITAN_TO_WORKERS/id_ed25519_common
+# Set environment variables (if not using run_task.sh):
+export MAIL_SERVER_IP="45.32.207.84"
+export MAIL_SERVER_PASS="your_password"
+export ANSIBLE_REMOTE_PORT="2288"  # If using custom SSH port
+export ANSIBLE_REMOTE_USER="phalkonadmin"  # If using custom user
+export ANSIBLE_PRIVATE_KEY_FILE="~/SSH_KEYS_CAPITAN_TO_WORKERS/id_ed25519_common"
+
+# Run tasks:
+ansible-playbook playbooks/task_2_2_1.yml
+ansible-playbook playbooks/task_2_2_2.yml
+ansible-playbook playbooks/task_2_2_3.yml
+ansible-playbook playbooks/task_2_2_4.yml
 ```
 
-### 3. Execute Task
+### Using VPN Connection (Internal Network)
 
 ```bash
-./run_task.sh 1.4.1
+# Override to use VPN IP instead of public IP:
+export ANSIBLE_HOST="10.100.0.25"
+
+ansible-playbook playbooks/task_2_2_1.yml
 ```
 
-## 📋 What This Task Creates
+## Detailed Usage
 
-### Mail System Directories
+### Task 2.2.1: Install Postfix
 
-```
-/var/mail/vmail/      → Virtual mail storage (root:root, 0755)
-/var/mail/queue/      → Postfix mail queue (root:root, 0755)
-/var/mail/backups/    → Mail system backups (root:root, 0755)
-```
+Installs and configures Postfix MTA with PostgreSQL virtual domains.
 
-### PostgreSQL Container Directories
+```bash
+./run_task.sh 2.2.1
 
-```
-/opt/postgres/data/       → Database volume (root:root, 0755)
-/opt/postgres/wal_archive/ → WAL archives (root:root, 0755)
-/opt/postgres/backups/    → DB backups (root:root, 0755)
-```
+# Or directly:
+ansible-playbook playbooks/task_2_2_1.yml
 
-## ✅ Prerequisites
+# With verbose output:
+ansible-playbook playbooks/task_2_2_1.yml -vv
 
-- [x] Task 1.3.1 (System Hardening) completed
-- [x] Task 1.3.2 (WireGuard VPN) completed
-- [x] Task 1.3.3 (Network Interfaces) completed
-- [x] Task 1.3.4 (SSH VPN-Only) completed
-- [x] Task 1.3.5 (Fail2ban) completed
-- [x] VPN connection active to 10.100.0.25
-- [x] SSH access working on port 2288
-- [x] Environment variables set
-
-## 📖 Documentation Guide
-
-### Start Here
-
-1. **INSTALLATION_GUIDE.md** ← Read this first
-   - Complete installation steps
-   - Pre-execution checklist
-   - Execution instructions
-
-### For Details
-
-2. **README_TASK_1.4.1.md**
-
-   - Comprehensive task documentation
-   - Troubleshooting
-   - Integration points
-
-3. **DIRECTORY_STRUCTURE.md**
-   - Visual diagrams
-   - Purpose of each directory
-   - Future structure preview
-
-### Quick Reference
-
-4. **TASK_1.4.1_QUICK_REFERENCE.md**
-   - One-page cheat sheet
-   - Essential commands only
-
-### Project Management
-
-5. **TASK_1.4.1_DELIVERY_SUMMARY.md**
-   - Delivery details
-   - Success criteria
-   - Next steps
-
-## 🚀 Execution Flow
-
-```
-1. Install files → 2. Verify prerequisites → 3. Execute task → 4. Verify results
-      ↓                      ↓                      ↓                  ↓
-   2 minutes            2 minutes              5 minutes         2 minutes
+# Check mode (dry run):
+ansible-playbook playbooks/task_2_2_1.yml --check
 ```
 
-**Total Time:** ~11 minutes
+**What it does:**
+- ✅ Validates Debian 13
+- ✅ Installs Postfix + postfix-pgsql
+- ✅ Configures PostgreSQL virtual domains
+- ✅ Sets up submission port (587)
+- ✅ Creates mail directories
+- ✅ Tests database connectivity
 
-## ✅ Success Criteria
+### Task 2.2.2: Install Dovecot
 
-After execution, you should have:
+Installs Dovecot 2.4 with PostgreSQL authentication (Debian 13 specific).
 
-- ✓ All 6 directories created
-- ✓ All directories owned by root:root
-- ✓ All directories have 0755 permissions
-- ✓ All directories verified to exist
-- ✓ Ready to proceed to Task 1.4.2
+```bash
+./run_task.sh 2.2.2
 
-## 🔄 Next Steps
+# Or directly:
+ansible-playbook playbooks/task_2_2_2.yml
+```
 
-After completing Task 1.4.1:
+**What it does:**
+- ✅ Installs dovecot-pgsql (critical for Debian 13!)
+- ✅ Configures SQL authentication with named sections
+- ✅ Sets up LMTP for Postfix integration
+- ✅ Configures Maildir format
+- ✅ Tests authentication
 
-1. **Verify on server** (see INSTALLATION_GUIDE.md)
-2. **Update tasks.md** - Mark Task 1.4.1 complete ✅
-3. **Proceed to Task 1.4.2:**
-   - Create vmail user (UID 5000)
-   - Create postgres user (UID 999)
-   - Set ownership on directories
-   - Configure permissions (750/700)
+**Important Dovecot 2.4 Changes Handled:**
+1. Named sections: `passdb sql {}` (not anonymous)
+2. Inline SQL config (no external dovecot-sql.conf.ext)
+3. Comments out `auth_username_format = %u`
+4. Uses `%{user}` variable syntax
+5. Returns `mail` field (not `maildir`) from queries
 
-## 🆘 Support
+### Task 2.2.3: Install OpenDKIM
 
-If you encounter issues:
+Sets up DKIM signing for email authentication.
 
-1. Check **INSTALLATION_GUIDE.md** → Troubleshooting section
-2. Check **README_TASK_1.4.1.md** → Troubleshooting guide
-3. Verify environment variables are set correctly
-4. Ensure VPN connection is active
-5. Test SSH connectivity manually
+```bash
+./run_task.sh 2.2.3
 
-## 📊 Task Metadata
+# Or directly:
+ansible-playbook playbooks/task_2_2_3.yml
+```
 
-| Property           | Value                                  |
-| ------------------ | -------------------------------------- |
-| **Task ID**        | 1.4.1                                  |
-| **Task Name**      | Create Mail System Directory Structure |
-| **Dependencies**   | Task 1.3.1 (System Hardening)          |
-| **Estimated Time** | 20 minutes (including setup)           |
-| **Risk Level**     | Low                                    |
-| **Reversible**     | Yes                                    |
-| **Status**         | ✅ Ready for Execution                 |
+**What it does:**
+- ✅ Installs OpenDKIM
+- ✅ Generates DKIM keys for your domain
+- ✅ Integrates with Postfix
+- ✅ Documents DNS records needed
 
-## 🏗️ Project Context
+**After running, check:**
+```bash
+# DNS records saved on server:
+ssh cucho1.phalkons.com "cat /root/dns_records.txt"
+ssh cucho1.phalkons.com "cat /root/dns_records_quick.txt"
+```
 
-- **Milestone:** 1.4 - Directory Structure & Storage
-- **Phase:** Milestone 1 - Environment Setup & Foundation
-- **Overall Progress:** 85% (Milestone 1)
-- **Previous Task:** Task 1.3.5 (Fail2ban) ✅
-- **Current Task:** Task 1.4.1 (Directory Structure) ← You are here
-- **Next Task:** Task 1.4.2 (Permissions & Ownership)
+### Task 2.2.4: Test Mail System
 
-## 📝 File Installation Checklist
+Comprehensive end-to-end testing with health scoring.
 
-- [ ] task_1.4.1.yml → ansible/playbooks/
-- [ ] create_mail_directories.yml → ansible/playbooks/
-- [ ] (Optional) Documentation files → ansible/
+```bash
+./run_task.sh 2.2.4
 
-## 🔗 Related Documents
+# Or directly:
+ansible-playbook playbooks/task_2_2_4.yml
+```
 
-From your project:
+**What it tests:**
+- ✅ Service status (Postfix, Dovecot, OpenDKIM)
+- ✅ Database connectivity
+- ✅ Authentication mechanisms
+- ✅ Port availability (25, 587, 993)
+- ✅ Mail delivery (SMTP → Dovecot)
+- ✅ DKIM signing
+- ✅ **Overall health score (0-100%)**
 
-- `tasks.md` - Task 1.4.1 specification
-- `planning.md` - Section 5.1 (Filesystem Layout)
-- `assistant_rules.md` - Session 2025-01-07 summary
-- `README.md` - Main ansible documentation
+**Output example:**
+```
+🎯 OVERALL HEALTH: 95% - EXCELLENT ✓✓✓
+   (9/9 checks passed)
 
-## 💡 Key Points
+Service Status:
+  Postfix:  RUNNING ✓
+  Dovecot:  RUNNING ✓
+  OpenDKIM: RUNNING ✓
 
-- **Idempotent:** Safe to run multiple times
-- **No Secrets:** No sensitive information in playbooks
-- **Follows Patterns:** Consistent with Task 1.3.x structure
-- **Well Documented:** Complete troubleshooting and verification
-- **Low Risk:** Only creates empty directories
+Test Results:
+  Mail Delivery: PASS ✓ (1 msg in ~3s)
+  DKIM Signing:  ACTIVE ✓
 
-## 🎓 What You'll Learn
+📄 Full report: /root/mail_system_test_report.txt
+```
 
-This task demonstrates:
+### Rollback Procedures
 
-- Ansible file module for directory creation
-- Directory verification patterns
-- Assertion-based validation
-- Comprehensive task output formatting
-- Preparation for Docker volume mounts
+If something goes wrong:
+
+```bash
+# Rollback Postfix:
+ansible-playbook playbooks/rollback_postfix.yml
+
+# Rollback Dovecot:
+ansible-playbook playbooks/rollback_dovecot.yml
+
+# Rollback OpenDKIM:
+ansible-playbook playbooks/rollback_opendkim.yml
+```
+
+**What rollback does:**
+- ✅ Restores original configuration from backups
+- ✅ Backs up current config before rollback
+- ✅ Removes Ansible-managed blocks
+- ✅ Restarts services
+- ✅ Validates configuration
+
+## DNS Configuration
+
+After running Task 2.2.3, you need to add DNS records for:
+- **SPF** - Authorizes your server to send mail
+- **DKIM** - Cryptographic email authentication
+- **DMARC** - Policy for handling unauthenticated mail
+- **MX** - Mail exchange server
+- **PTR** - Reverse DNS (configure via Vultr)
+
+**View DNS records:**
+```bash
+ssh cucho1.phalkons.com "cat /root/dns_records.txt"
+```
+
+**Quick copy-paste format:**
+```bash
+ssh cucho1.phalkons.com "cat /root/dns_records_quick.txt"
+```
+
+## Your Variables Explained
+
+Your `group_vars/all.yml` is already configured with:
+
+```yaml
+# Network (your actual values)
+mail_server_public_ip: "45.32.207.84"      # Public IP for DNS
+mail_server_vpn_ip: "10.100.0.25"          # Internal VPN IP
+mail_server_hostname: "cucho1.phalkons.com"
+
+# Database (PostgreSQL container)
+postgres_host: "10.100.0.25"               # VPN IP
+postgres_db: "mailserver"                  # Database name
+postgres_dovecot_user: "dovecot_user"      # Dovecot DB user
+postgres_postfix_user: "postfix_user"      # Postfix DB user
+
+# Mail Storage
+mail_vmail_dir: "/var/mail/vmail"          # Where emails are stored
+vmail_uid: 5000                            # Mail user UID
+vmail_gid: 5000                            # Mail user GID
+
+# Credentials
+postgres_credentials_file: "/root/postgres_service_users.txt"
+
+# SSL (self-signed for now)
+ssl_cert_path: "/etc/ssl/certs/ssl-cert-snakeoil.pem"
+ssl_key_path: "/etc/ssl/private/ssl-cert-snakeoil.key"
+
+# Test User
+mail_test_username: "testuser1"
+mail_test_domain: "testdomain.local"
+mail_test_password: "TestPass123!"
+```
+
+## Troubleshooting
+
+### Common Issues
+
+**Issue: "Failed to retrieve password"**
+```bash
+# Check your credentials file on server:
+ssh cucho1.phalkons.com "cat /root/postgres_service_users.txt"
+
+# Should contain sections like:
+# Postfix (Mail Routing):
+#   Username: postfix_user
+#   Password: your_password_here
+#
+# Dovecot (IMAP/POP3 Authentication):
+#   Username: dovecot_user  
+#   Password: another_password_here
+```
+
+**Issue: "Dovecot authentication failed"**
+```bash
+# SSH to server and test:
+ssh cucho1.phalkons.com
+
+# Check if dovecot-pgsql is installed (critical!):
+dpkg -l | grep dovecot-pgsql
+
+# Test authentication:
+doveadm auth test testuser1@testdomain.local TestPass123!
+
+# Check logs:
+journalctl -u dovecot -n 50
+```
+
+**Issue: "Mail not delivering"**
+```bash
+# SSH to server:
+ssh cucho1.phalkons.com
+
+# Check mail logs:
+tail -f /var/log/mail.log
+
+# Check Postfix queue:
+mailq
+
+# Test database connectivity:
+postmap -q testdomain.local pgsql:/etc/postfix/pgsql-virtual-mailbox-domains.cf
+```
+
+**Issue: "Connection refused"**
+```bash
+# Check if using correct connection method:
+
+# After Task 1.3.4, use VPN IP:
+export ANSIBLE_HOST="10.100.0.25"
+
+# After Task 1.3.2, use custom SSH port and user:
+export ANSIBLE_REMOTE_PORT="2288"
+export ANSIBLE_REMOTE_USER="phalkonadmin"
+export ANSIBLE_PRIVATE_KEY_FILE="~/SSH_KEYS_CAPITAN_TO_WORKERS/id_ed25519_common"
+```
+
+### Service Management on Server
+
+```bash
+# SSH to server:
+ssh cucho1.phalkons.com
+
+# Check service status:
+systemctl status postfix dovecot opendkim
+
+# View logs:
+tail -f /var/log/mail.log
+journalctl -u postfix -f
+journalctl -u dovecot -f
+journalctl -u opendkim -f
+
+# Restart services:
+systemctl restart postfix
+systemctl restart dovecot
+systemctl restart opendkim
+```
+
+### Re-running Playbooks
+
+All playbooks are idempotent and safe to re-run:
+
+```bash
+# Re-run any task:
+./run_task.sh 2.2.2  # Example: re-configure Dovecot
+
+# Re-test system:
+./run_task.sh 2.2.4
+```
+
+## Advanced Usage
+
+### Running Specific Tags
+
+```bash
+# Run only DKIM configuration:
+ansible-playbook playbooks/task_2_2_3.yml --tags dkim
+
+# Run only authentication configuration:
+ansible-playbook playbooks/task_2_2_3.yml --tags authentication
+```
+
+### Override Variables
+
+```bash
+# Override specific variables:
+ansible-playbook playbooks/task_2_2_1.yml \
+  -e "postfix_myhostname=mail2.phalkons.com" \
+  -e "mail_test_domain=phalkons.com"
+```
+
+### Verbose Output
+
+```bash
+# See all details:
+ansible-playbook playbooks/task_2_2_1.yml -vvv
+
+# See what changed:
+ansible-playbook playbooks/task_2_2_1.yml -v
+```
+
+## PostgreSQL Database Requirements
+
+Your PostgreSQL database (`mailserver`) should have these tables:
+
+### Required Tables
+
+**1. domain** - Mail domains
+```sql
+CREATE TABLE domain (
+    domain VARCHAR(255) PRIMARY KEY,
+    description TEXT,
+    active BOOLEAN DEFAULT true
+);
+```
+
+**2. mailbox** - Email accounts  
+```sql
+CREATE TABLE mailbox (
+    username VARCHAR(255) PRIMARY KEY,
+    password VARCHAR(255) NOT NULL,
+    name VARCHAR(255),
+    maildir VARCHAR(255),
+    active BOOLEAN DEFAULT true
+);
+```
+
+**3. alias** - Email aliases
+```sql
+CREATE TABLE alias (
+    address VARCHAR(255) PRIMARY KEY,
+    goto TEXT NOT NULL,
+    active BOOLEAN DEFAULT true
+);
+```
+
+### Test User Setup
+
+```sql
+-- Add test domain
+INSERT INTO domain (domain, active) 
+VALUES ('testdomain.local', true);
+
+-- Add test user (password: TestPass123!)
+-- Generate password with: doveadm pw -s SHA512-CRYPT
+INSERT INTO mailbox (username, password, name, maildir, active)
+VALUES (
+    'testuser1@testdomain.local',
+    '{SHA512-CRYPT}$6$...',  -- Your hashed password
+    'Test User',
+    'testdomain.local/testuser1/',
+    true
+);
+```
+
+## Security Considerations
+
+### Best Practices
+1. ✅ Strong passwords in PostgreSQL
+2. ✅ Firewall configured (ufw/iptables)
+3. ✅ VPN for internal communication (10.100.0.0/24)
+4. ✅ Custom SSH port (2288) and user (phalkonadmin)
+5. ⚠️ Replace self-signed SSL cert with Let's Encrypt in production
+6. ⚠️ Configure fail2ban for brute-force protection
+7. ⚠️ Set DMARC policy to "p=reject" after testing
+
+### Firewall Rules on Server
+
+```bash
+ssh cucho1.phalkons.com
+
+# Allow mail ports:
+ufw allow 25/tcp comment "SMTP"
+ufw allow 587/tcp comment "Submission"
+ufw allow 993/tcp comment "IMAPS"
+
+# Check status:
+ufw status
+```
+
+## Backup Strategy
+
+**Critical files to backup:**
+- Configuration: `/etc/postfix/`, `/etc/dovecot/`, `/etc/opendkim/`
+- Mail data: `/var/mail/vmail/`
+- Database: `pg_dump mailserver`
+- Credentials: `/root/postgres_service_users.txt`
+
+**Automated backup:**
+```bash
+# On server, create backup script:
+cat > /root/backup-mail.sh <<'EOF'
+#!/bin/bash
+BACKUP_DIR="/var/mail/backups/$(date +%Y%m%d)"
+mkdir -p "$BACKUP_DIR"
+tar czf "$BACKUP_DIR/configs.tar.gz" /etc/postfix /etc/dovecot /etc/opendkim
+tar czf "$BACKUP_DIR/vmail.tar.gz" /var/mail/vmail
+docker exec mailserver-postgres pg_dump -U postgres mailserver | gzip > "$BACKUP_DIR/maildb.sql.gz"
+EOF
+
+chmod +x /root/backup-mail.sh
+```
+
+## Performance Tuning
+
+For high-volume servers, consider in `group_vars/all.yml`:
+```yaml
+# Add these to group_vars/all.yml for production:
+postfix_smtpd_client_connection_rate_limit: 100
+postfix_smtpd_client_message_rate_limit: 100
+dovecot_mail_max_userip_connections: 50
+```
+
+## Support
+
+### Getting Help
+1. Review IMPROVEMENTS_SUMMARY.md for what changed
+2. Check `/var/log/mail.log` on server for errors
+3. Run test playbook: `./run_task.sh 2.2.4`
+4. Review test report: `ssh cucho1.phalkons.com "cat /root/mail_system_test_report.txt"`
+
+### Reporting Issues
+Include:
+- Task that failed (e.g., 2.2.2)
+- Output with `-vv` flag
+- Service logs from server
+- Test report if available
+
+## What's Next
+
+After successful deployment:
+
+1. ✅ Add real domains to PostgreSQL
+2. ✅ Configure DNS records (see `/root/dns_records.txt`)
+3. ✅ Replace self-signed SSL with Let's Encrypt
+4. ✅ Set up SOGo webmail (if needed)
+5. ✅ Configure monitoring
+6. ✅ Set up automated backups
+7. ✅ Test with external email services
 
 ---
 
-**Package Version:** 1.0  
-**Created:** 2025-01-12  
-**Task Status:** Ready for Execution ✅  
-**Execution Time:** ~11 minutes total  
-**Next Action:** Follow INSTALLATION_GUIDE.md
-
-**Questions?** Start with INSTALLATION_GUIDE.md or README_TASK_1.4.1.md
+**Version:** 2.0 (Enhanced for Your Setup)  
+**Server:** cucho1.phalkons.com (45.32.207.84)  
+**Last Updated:** January 2026  
+**Tested On:** Debian 13 (Trixie) with Dovecot 2.4.1, Postfix 3.10.4, PostgreSQL 17

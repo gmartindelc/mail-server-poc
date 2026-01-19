@@ -1,0 +1,279 @@
+---
+# Diagnostic Playbook: PostgreSQL Connection Issues
+# 
+# Purpose: Diagnose why Postfix can't connect to PostgreSQL
+# Usage: ansible-playbook playbooks/diagnose_postgres.yml
+
+- name: Diagnose PostgreSQL Connection Issues
+  hosts: mail_servers
+  become: yes
+  gather_facts: yes
+  
+  tasks:
+    - name: Check if PostgreSQL container is running
+      ansible.builtin.command:
+        cmd: docker ps --filter name={{ postgres_container_name }}
+      register: postgres_container
+      changed_when: false
+
+    - name: Display container status
+      ansible.builtin.debug:
+        msg: "{{ postgres_container.stdout_lines }}"
+
+    - name: Check PostgreSQL is listening
+      ansible.builtin.command:
+        cmd: ss -tlnp | grep 5432
+      register: postgres_listening
+      changed_when: false
+      failed_when: false
+
+    - name: Display PostgreSQL listening status
+      ansible.builtin.debug:
+        msg: "{{ postgres_listening.stdout_lines if postgres_listening.stdout_lines else 'PostgreSQL not listening on port 5432' }}"
+
+    - name: Read Postfix password from credentials file
+      ansible.builtin.shell:
+        cmd: |
+          python3 -c "
+          import re
+          try:
+              with open('{{ postgres_credentials_file }}', 'r') as f:
+                  content = f.read()
+                  match = re.search(r'Postfix.*?Password:\s*(\S+)', content, re.DOTALL | re.IGNORECASE)
+                  if match:
+                      print(match.group(1))
+                  else:
+                      print('NOT_FOUND')
+          except Exception as e:
+              print(f'ERROR: {e}')
+          "
+      register: postfix_password_check
+      changed_when: false
+
+    - name: Display password status
+      ansible.builtin.debug:
+        msg: "Password found: {{ 'YES' if postfix_password_check.stdout != 'NOT_FOUND' and postfix_password_check.stdout != '' else 'NO' }}"
+
+    - name: Check credentials file content
+      ansible.builtin.command:
+        cmd: cat {{ postgres_credentials_file }}
+      register: creds_file
+      changed_when: false
+      failed_when: false
+
+    - name: Display credentials file structure
+      ansible.builtin.debug:
+        msg: "{{ creds_file.stdout_lines }}"
+
+    - name: Test PostgreSQL connection from container
+      ansible.builtin.command:
+        cmd: docker exec {{ postgres_container_name }} psql -U {{ postgres_admin_user }} -d {{ postgres_db }} -c "SELECT 1 as test"
+      register: postgres_admin_test
+      changed_when: false
+      failed_when: false
+
+    - name: Display admin connection test
+      ansible.builtin.debug:
+        msg: "Admin connection: {{ 'SUCCESS' if postgres_admin_test.rc == 0 else 'FAILED' }}"
+
+    - name: Check if postfix_user exists in PostgreSQL
+      ansible.builtin.command:
+        cmd: docker exec {{ postgres_container_name }} psql -U {{ postgres_admin_user }} -d {{ postgres_db }} -c "SELECT usename FROM pg_user WHERE usename='{{ postgres_postfix_user }}'"
+      register: postfix_user_check
+      changed_when: false
+      failed_when: false
+
+    - name: Display postfix user status
+      ansible.builtin.debug:
+        msg: "{{ postfix_user_check.stdout_lines }}"
+
+    - name: Check if virtual_domains table exists
+      ansible.builtin.command:
+        cmd: docker exec {{ postgres_container_name }} psql -U {{ postgres_admin_user }} -d {{ postgres_db }} -c "SELECT table_name FROM information_schema.tables WHERE table_name='virtual_domains'"
+      register: table_check
+      changed_when: false
+      failed_when: false
+
+    - name: Display table status
+      ansible.builtin.debug:
+        msg: "{{ table_check.stdout_lines }}"
+
+    - name: Check data in virtual_domains
+      ansible.builtin.command:
+        cmd: docker exec {{ postgres_container_name }} psql -U {{ postgres_admin_user }} -d {{ postgres_db }} -c "SELECT * FROM virtual_domains"
+      register: domains_data
+      changed_when: false
+      failed_when: false
+
+    - name: Display domains data
+      ansible.builtin.debug:
+        msg: "{{ domains_data.stdout_lines }}"
+
+    - name: Check Postfix lookup file
+      ansible.builtin.command:
+        cmd: cat /etc/postfix/pgsql-virtual-mailbox-domains.cf
+      register: postfix_lookup
+      changed_when: false
+      failed_when: false
+
+    - name: Display lookup file content
+      ansible.builtin.debug:
+        msg: "{{ postfix_lookup.stdout_lines }}"
+
+    - name: Test postmap manually
+      ansible.builtin.shell:
+        cmd: postmap -q testdomain.local pgsql:/etc/postfix/pgsql-virtual-mailbox-domains.cf
+      register: postmap_test
+      changed_when: false
+      failed_when: false
+
+    - name: Display postmap test result
+      ansible.builtin.debug:
+        msg: "{{ postmap_test.stdout if postmap_test.stdout else 'EMPTY - Error: ' + postmap_test.stderr }}"
+
+    - name: Check Postfix logs for errors
+      ansible.builtin.command:
+        cmd: journalctl -u postfix --no-pager -n 50
+      register: postfix_logs
+      changed_when: false
+
+    - name: Display relevant Postfix log entries
+      ansible.builtin.shell:
+        cmd: journalctl -u postfix --no-pager -n 50 | grep -i "fatal\|error\|warn\|pgsql"
+      register: postfix_errors
+      changed_when: false
+      failed_when: false
+
+    - name: Display Postfix errors
+      ansible.builtin.debug:
+        msg: "{{ postfix_errors.stdout_lines if postfix_errors.stdout else 'No errors found in Postfix logs' }}"
+
+    - name: Test direct psql connection with postfix user
+      ansible.builtin.shell:
+        cmd: |
+          PGPASSWORD='{{ postfix_password_check.stdout }}' psql -h {{ postgres_host }} -U {{ postgres_postfix_user }} -d {{ postgres_db }} -c "SELECT name FROM virtual_domains WHERE name='testdomain.local'"
+      register: direct_psql_test
+      changed_when: false
+      failed_when: false
+      when: postfix_password_check.stdout != 'NOT_FOUND'
+
+    - name: Display direct psql test
+      ansible.builtin.debug:
+        msg: "{{ direct_psql_test.stdout_lines if direct_psql_test is defined and direct_psql_test.rc == 0 else 'Direct psql connection FAILED' }}"
+      when: postfix_password_check.stdout != 'NOT_FOUND'
+
+    - name: Create diagnostic summary
+      ansible.builtin.copy:
+        dest: /root/postgres_diagnostic_report.txt
+        content: |
+          ==========================================
+          PostgreSQL Diagnostic Report
+          ==========================================
+          
+          Date: {{ ansible_date_time.iso8601 }}
+          Server: {{ mail_server_hostname }}
+          
+          CONTAINER STATUS:
+          -----------------
+          {{ postgres_container.stdout }}
+          
+          NETWORK STATUS:
+          ---------------
+          PostgreSQL listening: {{ 'YES' if postgres_listening.rc == 0 else 'NO' }}
+          {{ postgres_listening.stdout if postgres_listening.stdout else 'Not listening on any interface' }}
+          
+          DATABASE ACCESS:
+          ----------------
+          Admin connection: {{ 'SUCCESS' if postgres_admin_test.rc == 0 else 'FAILED' }}
+          Postfix user exists: {{ 'YES' if postgres_postfix_user in postfix_user_check.stdout else 'NO' }}
+          virtual_domains table: {{ 'EXISTS' if 'virtual_domains' in table_check.stdout else 'NOT FOUND' }}
+          
+          CREDENTIALS:
+          ------------
+          Credentials file: {{ postgres_credentials_file }}
+          Password retrieved: {{ 'YES' if postfix_password_check.stdout != 'NOT_FOUND' else 'NO' }}
+          
+          DATA CHECK:
+          -----------
+          Domains in database:
+          {{ domains_data.stdout if domains_data.rc == 0 else 'Could not query' }}
+          
+          POSTFIX CONFIGURATION:
+          ----------------------
+          Lookup file: /etc/postfix/pgsql-virtual-mailbox-domains.cf
+          {{ postfix_lookup.stdout if postfix_lookup.rc == 0 else 'File not found' }}
+          
+          POSTMAP TEST:
+          -------------
+          Result: {{ postmap_test.stdout if postmap_test.stdout else 'FAILED' }}
+          {% if postmap_test.stderr %}
+          Error: {{ postmap_test.stderr }}
+          {% endif %}
+          
+          DIRECT CONNECTION TEST:
+          -----------------------
+          {% if postfix_password_check.stdout != 'NOT_FOUND' %}
+          {{ direct_psql_test.stdout if direct_psql_test is defined and direct_psql_test.rc == 0 else 'Connection FAILED' }}
+          {% else %}
+          Could not test - password not found
+          {% endif %}
+          
+          POSTFIX ERRORS:
+          ---------------
+          {{ postfix_errors.stdout if postfix_errors.stdout else 'No errors in recent logs' }}
+          
+          DIAGNOSIS:
+          ----------
+          {% if postgres_container.stdout | length == 0 %}
+          ❌ PostgreSQL container is NOT running
+             Fix: docker start {{ postgres_container_name }}
+          {% elif postgres_listening.rc != 0 %}
+          ❌ PostgreSQL is not listening on port 5432
+             Fix: Check container port binding and postgres.conf
+          {% elif postfix_password_check.stdout == 'NOT_FOUND' %}
+          ❌ Postfix password not found in credentials file
+             Fix: Check {{ postgres_credentials_file }} format
+          {% elif postgres_postfix_user not in postfix_user_check.stdout %}
+          ❌ Postfix user does not exist in PostgreSQL
+             Fix: Run Task 2.1.2 to create database users
+          {% elif 'virtual_domains' not in table_check.stdout %}
+          ❌ virtual_domains table does not exist
+             Fix: Run Task 2.1.2 to create database schema
+          {% elif domains_data.stdout | length < 10 %}
+          ❌ No data in virtual_domains table
+             Fix: INSERT test data or run Task 2.1.2
+          {% else %}
+          ⚠️  Configuration looks correct but connection still fails
+             Check: PostgreSQL pg_hba.conf for authentication rules
+             Check: Network connectivity between services
+          {% endif %}
+          
+          ==========================================
+        mode: '0644'
+
+    - name: Display diagnostic summary
+      ansible.builtin.debug:
+        msg:
+          - "=========================================="
+          - "PostgreSQL Diagnostic Complete"
+          - "=========================================="
+          - ""
+          - "Container Running: {{ 'YES' if postgres_container.stdout | length > 0 else 'NO' }}"
+          - "PostgreSQL Listening: {{ 'YES' if postgres_listening.rc == 0 else 'NO' }}"
+          - "Admin Connection: {{ 'SUCCESS' if postgres_admin_test.rc == 0 else 'FAILED' }}"
+          - "Postfix User Exists: {{ 'YES' if postgres_postfix_user in postfix_user_check.stdout else 'NO' }}"
+          - "virtual_domains Table: {{ 'EXISTS' if 'virtual_domains' in table_check.stdout else 'NOT FOUND' }}"
+          - "Postmap Test: {{ 'SUCCESS' if postmap_test.rc == 0 else 'FAILED' }}"
+          - ""
+          - "Full report: /root/postgres_diagnostic_report.txt"
+          - ""
+          - "Next steps:"
+          - "{% if postgres_postfix_user not in postfix_user_check.stdout %}"
+          - "  1. Run Task 2.1.2 to create database users"
+          - "{% elif 'virtual_domains' not in table_check.stdout %}"
+          - "  1. Run Task 2.1.2 to create database schema"
+          - "{% else %}"
+          - "  1. Check /root/postgres_diagnostic_report.txt for details"
+          - "  2. Verify PostgreSQL pg_hba.conf authentication rules"
+          - "{% endif %}"
+          - "=========================================="

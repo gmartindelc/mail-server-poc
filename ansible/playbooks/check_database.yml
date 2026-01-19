@@ -5,7 +5,7 @@
   tasks:
     - name: Check domains in database
       ansible.builtin.command:
-        cmd: docker exec mailserver-postgres psql -U postgres -d mailserver -c "SELECT * FROM virtual_domains;"
+        cmd: docker exec mailserver-postgres psql -U postgres -d mailserver -c "SELECT * FROM domain;"
       register: domains
       changed_when: false
       
@@ -15,7 +15,7 @@
         
     - name: Check users in database
       ansible.builtin.command:
-        cmd: docker exec mailserver-postgres psql -U postgres -d mailserver -c "SELECT email FROM virtual_users;"
+        cmd: docker exec mailserver-postgres psql -U postgres -d mailserver -c "SELECT username FROM mailbox;"
       register: users
       changed_when: false
       

@@ -1,0 +1,27 @@
+---
+# Task 1.5.1: Configure UFW Firewall
+# 
+# Purpose: Configure firewall according to planning.md network architecture
+# - Public services: SMTP (25), Submission (587), HTTP/HTTPS (80/443)
+# - VPN-only services: IMAPS (993), PostgreSQL (5432), SSH (2288)
+# - Deny all other incoming traffic
+# - Allow all outgoing traffic
+#
+# Based on planning.md Section 3.2 - Service Binding Strategy
+#
+# Usage: ./run_task.sh 1.5.1
+# Or: ansible-playbook playbooks/task_1_5_1.yml
+
+- name: Task 1.5.1 - Configure UFW Firewall
+  hosts: mail_servers
+  become: yes
+  gather_facts: yes
+  
+  tasks:
+    - name: Include UFW configuration playbook
+      ansible.builtin.include_tasks:
+        file: configure_ufw_firewall.yml
+      tags:
+        - firewall
+        - security
+        - ufw

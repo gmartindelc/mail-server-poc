@@ -1,0 +1,98 @@
+---
+# Rollback Playbook: Restore Postfix Configuration
+# 
+# Purpose: Restore Postfix to its pre-Ansible configuration
+# Usage: ansible-playbook rollback_postfix.yml
+
+- name: Rollback Postfix Configuration
+  hosts: all
+  become: yes
+  gather_facts: yes
+  
+  tasks:
+    - name: Check if backup exists
+      ansible.builtin.find:
+        paths: /etc/postfix
+        patterns: "main.cf.backup*"
+      register: backup_files
+
+    - name: Fail if no backup found
+      ansible.builtin.fail:
+        msg: "No Postfix backup found. Cannot rollback."
+      when: backup_files.files | length == 0
+
+    - name: Display available backups
+      ansible.builtin.debug:
+        msg: "Found {{ backup_files.files | length }} backup(s). Using most recent."
+
+    - name: Sort backups by modification time
+      ansible.builtin.set_fact:
+        latest_backup: "{{ backup_files.files | sort(attribute='mtime', reverse=true) | first }}"
+
+    - name: Stop Postfix
+      ansible.builtin.systemd:
+        name: postfix
+        state: stopped
+
+    - name: Backup current configuration before rollback
+      ansible.builtin.copy:
+        src: /etc/postfix/main.cf
+        dest: /etc/postfix/main.cf.pre-rollback
+        remote_src: yes
+
+    - name: Restore main.cf from backup
+      ansible.builtin.copy:
+        src: "{{ latest_backup.path }}"
+        dest: /etc/postfix/main.cf
+        remote_src: yes
+        backup: yes
+
+    - name: Restore master.cf if backup exists
+      ansible.builtin.copy:
+        src: /etc/postfix/master.cf.backup
+        dest: /etc/postfix/master.cf
+        remote_src: yes
+      when: backup_files.files | length > 0
+      failed_when: false
+
+    - name: Remove PostgreSQL lookup files
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: absent
+      loop:
+        - /etc/postfix/pgsql-virtual-mailbox-domains.cf
+        - /etc/postfix/pgsql-virtual-mailbox-maps.cf
+        - /etc/postfix/pgsql-virtual-alias-maps.cf
+
+    - name: Remove Ansible marker file
+      ansible.builtin.file:
+        path: /etc/postfix/main.cf.ansible_managed
+        state: absent
+
+    - name: Test Postfix configuration
+      ansible.builtin.command:
+        cmd: postfix check
+      register: postfix_check
+      changed_when: false
+
+    - name: Start Postfix
+      ansible.builtin.systemd:
+        name: postfix
+        state: started
+
+    - name: Display rollback summary
+      ansible.builtin.debug:
+        msg:
+          - "=========================================="
+          - "Postfix Rollback Complete"
+          - "=========================================="
+          - ""
+          - "✓ Configuration restored from: {{ latest_backup.path }}"
+          - "✓ Current config backed up to: /etc/postfix/main.cf.pre-rollback"
+          - "✓ PostgreSQL lookup files removed"
+          - "✓ Postfix service restarted"
+          - ""
+          - "Verify status:"
+          - "  sudo systemctl status postfix"
+          - "  sudo postconf -n"
+          - "=========================================="

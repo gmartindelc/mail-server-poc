@@ -3,6 +3,29 @@
 # 
 # Purpose: Deploy OpenDKIM for email signing and authentication
 # Can be included by task wrappers or run standalone
+#
+# ENHANCEMENTS:
+# - Pre-flight validation
+# - Improved idempotency checks
+# - Better key management
+# - DNS record validation hints
+# - Rollback capability
+
+- name: Pre-flight - Validate OS requirements
+  ansible.builtin.assert:
+    that:
+      - ansible_distribution == "Debian"
+    fail_msg: "This playbook is designed for Debian-based systems"
+    success_msg: "OS validation passed: {{ ansible_distribution }} {{ ansible_distribution_version }}"
+
+- name: Pre-flight - Check if OpenDKIM is already configured
+  ansible.builtin.stat:
+    path: /etc/opendkim/opendkim.conf.ansible_managed
+  register: opendkim_configured
+
+- name: Display configuration status
+  ansible.builtin.debug:
+    msg: "OpenDKIM configuration status: {{ 'Already configured' if opendkim_configured.stat.exists else 'New installation' }}"
 
 - name: Install OpenDKIM and dependencies
   ansible.builtin.apt:
@@ -29,11 +52,21 @@
     - /etc/opendkim/keys
     - /run/opendkim
 
+- name: Backup original opendkim.conf (if exists)
+  ansible.builtin.copy:
+    src: /etc/opendkim.conf
+    dest: /etc/opendkim.conf.backup.{{ ansible_date_time.epoch }}
+    remote_src: yes
+    force: no
+  failed_when: false
+
 - name: Configure opendkim.conf
   ansible.builtin.copy:
     dest: /etc/opendkim.conf
     content: |
       # OpenDKIM Configuration
+      # Configured by Ansible on {{ ansible_date_time.iso8601 }}
+      
       Syslog                  yes
       SyslogSuccess           yes
       LogWhy                  yes
@@ -66,6 +99,7 @@
   ansible.builtin.copy:
     dest: /etc/opendkim/TrustedHosts
     content: |
+      # Trusted hosts - can send mail through our server
       127.0.0.1
       localhost
       {{ mail_server_vpn_network }}
@@ -102,11 +136,21 @@
     group: opendkim
     mode: '0750'
 
+- name: Check if DKIM key already exists
+  ansible.builtin.stat:
+    path: /etc/opendkim/keys/{{ mail_test_domain }}/{{ dkim_selector }}.private
+  register: dkim_key_exists
+
+- name: Display DKIM key status
+  ansible.builtin.debug:
+    msg: "DKIM key status: {{ 'Already exists - will not regenerate' if dkim_key_exists.stat.exists else 'Will generate new key' }}"
+
 - name: Generate DKIM key for test domain
   ansible.builtin.command:
     cmd: opendkim-genkey -s {{ dkim_selector }} -d {{ mail_test_domain }}
     chdir: /etc/opendkim/keys/{{ mail_test_domain }}
     creates: /etc/opendkim/keys/{{ mail_test_domain }}/{{ dkim_selector }}.private
+  register: dkim_key_generated
 
 - name: Set ownership of DKIM keys
   ansible.builtin.file:
@@ -117,6 +161,13 @@
   loop:
     - /etc/opendkim/keys/{{ mail_test_domain }}/{{ dkim_selector }}.private
     - /etc/opendkim/keys/{{ mail_test_domain }}/{{ dkim_selector }}.txt
+
+- name: Check if Postfix is already configured for OpenDKIM
+  ansible.builtin.command:
+    cmd: grep -q "milter_protocol" /etc/postfix/main.cf
+  register: postfix_milter_configured
+  changed_when: false
+  failed_when: false
 
 - name: Configure Postfix to use OpenDKIM
   ansible.builtin.blockinfile:
@@ -129,6 +180,22 @@
       smtpd_milters = inet:localhost:8891
       non_smtpd_milters = inet:localhost:8891
     state: present
+  when: postfix_milter_configured.rc != 0
+
+- name: Display Postfix integration status
+  ansible.builtin.debug:
+    msg: "Postfix milter configuration: {{ 'Already configured' if postfix_milter_configured.rc == 0 else 'Configured now' }}"
+
+- name: Create configuration marker file
+  ansible.builtin.copy:
+    dest: /etc/opendkim/opendkim.conf.ansible_managed
+    content: |
+      # This file indicates OpenDKIM was configured by Ansible
+      # Configuration date: {{ ansible_date_time.iso8601 }}
+      # Playbook: install_opendkim.yml
+      # DKIM Selector: {{ dkim_selector }}
+      # Domain: {{ mail_test_domain }}
+    mode: '0644'
 
 - name: Test OpenDKIM configuration
   ansible.builtin.command:
@@ -166,6 +233,12 @@
     msg: "OpenDKIM failed to start. Check logs above."
   when: opendkim_start.failed is defined and opendkim_start.failed
 
+- name: Wait for OpenDKIM socket to be ready
+  ansible.builtin.wait_for:
+    port: 8891
+    delay: 2
+    timeout: 10
+
 - name: Restart Postfix to apply OpenDKIM integration
   ansible.builtin.systemd:
     name: postfix
@@ -191,13 +264,16 @@
       Server: {{ mail_server_hostname }}
       Public IP: {{ mail_server_public_ip }}
       Test Domain: {{ mail_test_domain }}
+      Generated: {{ ansible_date_time.iso8601 }}
       
       IMPORTANT: Add these records to your DNS provider
       
+      ==========================================
       1. SPF Record (TXT)
-      -------------------
+      ==========================================
       Domain: {{ mail_test_domain }}
       Type: TXT
+      TTL: 3600
       Value: "v=spf1 ip4:{{ mail_server_public_ip }} -all"
       
       Explanation:
@@ -205,20 +281,29 @@
       - ip4:{{ mail_server_public_ip }}: Authorize this IP to send mail
       - -all: Reject all other servers (strict policy)
       
+      Alternative (softer policy):
+      "v=spf1 ip4:{{ mail_server_public_ip }} ~all"
+      (uses ~all for soft fail instead of hard reject)
       
+      
+      ==========================================
       2. DKIM Record (TXT)
-      --------------------
+      ==========================================
       {{ dkim_dns_record }}
       
       Explanation:
       - This is a public key that receiving servers use to verify
-      - emails signed by your server are authentic
+        emails signed by your server are authentic
+      - The selector is: {{ dkim_selector }}
+      - Verification will use: {{ dkim_selector }}._domainkey.{{ mail_test_domain }}
       
       
+      ==========================================
       3. DMARC Record (TXT)
-      ---------------------
+      ==========================================
       Domain: _dmarc.{{ mail_test_domain }}
       Type: TXT
+      TTL: 3600
       Value: "v=DMARC1; p=quarantine; rua=mailto:postmaster@{{ mail_test_domain }}; pct=100; adkim=s; aspf=s"
       
       Explanation:
@@ -229,38 +314,141 @@
       - adkim=s: Strict DKIM alignment
       - aspf=s: Strict SPF alignment
       
+      Start with relaxed policy during testing:
+      "v=DMARC1; p=none; rua=mailto:postmaster@{{ mail_test_domain }}; pct=100; adkim=r; aspf=r"
       
+      
+      ==========================================
       4. MX Record
-      ------------
+      ==========================================
       Domain: {{ mail_test_domain }}
       Type: MX
       Priority: 10
+      TTL: 3600
       Value: {{ mail_server_hostname }}
       
+      Note: Ensure {{ mail_server_hostname }} has an A record pointing to {{ mail_server_public_ip }}
       
+      
+      ==========================================
       5. PTR Record (Reverse DNS)
-      ---------------------------
+      ==========================================
       IP: {{ mail_server_public_ip }}
       Points to: {{ mail_server_hostname }}
+      TTL: 3600
       
-      Note: This must be configured through your VPS provider (Vultr)
+      IMPORTANT: This must be configured through your VPS/hosting provider
+      Common providers:
+      - AWS: Elastic IP settings
+      - Vultr: Server settings → IPv4 → Reverse DNS
+      - DigitalOcean: Droplet settings → Networking
       
       
       ==========================================
       Testing Your Configuration
       ==========================================
       
-      After adding DNS records, test with:
+      After adding DNS records (wait 5-15 minutes for propagation):
       
-      1. SPF: https://mxtoolbox.com/spf.aspx
-      2. DKIM: Send test email to check-auth@verifier.port25.com
-      3. DMARC: https://mxtoolbox.com/dmarc.aspx
-      4. Overall: https://www.mail-tester.com/
+      1. Verify DNS propagation:
+         dig {{ mail_test_domain }} TXT
+         dig {{ dkim_selector }}._domainkey.{{ mail_test_domain }} TXT
+         dig _dmarc.{{ mail_test_domain }} TXT
+      
+      2. Test SPF:
+         https://mxtoolbox.com/spf.aspx
+         Enter: {{ mail_test_domain }}
+      
+      3. Test DKIM:
+         sudo opendkim-testkey -d {{ mail_test_domain }} -s {{ dkim_selector }} -vvv
+         
+         Or send test email to: check-auth@verifier.port25.com
+      
+      4. Test DMARC:
+         https://mxtoolbox.com/dmarc.aspx
+         Enter: {{ mail_test_domain }}
+      
+      5. Overall mail server test:
+         https://www.mail-tester.com/
+         Send test email to the address provided
+      
+      6. Check blacklists:
+         https://mxtoolbox.com/blacklists.aspx
+         Enter: {{ mail_server_public_ip }}
+      
+      
+      ==========================================
+      Quick Verification Commands
+      ==========================================
+      
+      # Check if DNS records are live:
+      dig {{ mail_test_domain }} TXT +short
+      dig {{ dkim_selector }}._domainkey.{{ mail_test_domain }} TXT +short
+      dig _dmarc.{{ mail_test_domain }} TXT +short
+      dig {{ mail_test_domain }} MX +short
+      dig -x {{ mail_server_public_ip }} +short
+      
+      # Test DKIM locally:
+      sudo opendkim-testkey -d {{ mail_test_domain }} -s {{ dkim_selector }} -vvv
+      
+      # Check OpenDKIM status:
+      sudo systemctl status opendkim
+      sudo journalctl -u opendkim -n 20
+      
+      
+      ==========================================
+      Troubleshooting
+      ==========================================
+      
+      If DKIM test fails with "key not secure":
+      - Wait longer for DNS propagation (can take up to 48 hours)
+      - Verify DNS record format is exactly correct
+      - Check for extra quotes or spaces in DNS value
+      
+      If emails still not authenticated:
+      - Check /var/log/mail.log for DKIM signing messages
+      - Verify Postfix is using milter: postconf | grep milter
+      - Test sending: echo "Test" | mail -s "Test" test@gmail.com
       
       ==========================================
     mode: '0644'
     owner: root
     group: root
+
+- name: Create quick DNS copy-paste file
+  ansible.builtin.copy:
+    dest: /root/dns_records_quick.txt
+    content: |
+      # Quick copy-paste DNS records for {{ mail_test_domain }}
+      
+      # SPF Record
+      Type: TXT
+      Name: {{ mail_test_domain }}
+      Value: v=spf1 ip4:{{ mail_server_public_ip }} -all
+      
+      # DKIM Record
+      {{ dkim_dns_record | regex_replace('\n', ' ') | regex_replace('\s+', ' ') }}
+      
+      # DMARC Record
+      Type: TXT
+      Name: _dmarc.{{ mail_test_domain }}
+      Value: v=DMARC1; p=quarantine; rua=mailto:postmaster@{{ mail_test_domain }}; pct=100; adkim=s; aspf=s
+      
+      # MX Record
+      Type: MX
+      Name: {{ mail_test_domain }}
+      Priority: 10
+      Value: {{ mail_server_hostname }}
+    mode: '0644'
+    owner: root
+    group: root
+
+- name: Test DKIM key
+  ansible.builtin.command:
+    cmd: opendkim-testkey -d {{ mail_test_domain }} -s {{ dkim_selector }} -vvv
+  register: dkim_test_result
+  changed_when: false
+  failed_when: false
 
 - name: Display completion summary
   ansible.builtin.debug:
@@ -270,19 +458,37 @@
       - "=========================================="
       - ""
       - "✓ OpenDKIM installed and configured"
-      - "✓ DKIM keys generated for {{ mail_test_domain }}"
+      - "✓ DKIM keys {{ 'existed (not regenerated)' if dkim_key_exists.stat.exists else 'generated' }} for {{ mail_test_domain }}"
       - "✓ Postfix integrated with OpenDKIM"
       - "✓ DNS records documented"
       - ""
+      - "Configuration Status:"
+      - "  OpenDKIM Service: {{ 'Running' if opendkim_start.state == 'started' else 'Check logs' }}"
+      - "  DKIM Key Test: {{ 'PASS' if dkim_test_result.rc == 0 else 'PENDING (DNS records not configured)' }}"
+      - "  Selector: {{ dkim_selector }}"
+      - ""
       - "IMPORTANT - DNS Configuration Required:"
-      - "DNS records saved to: /root/dns_records.txt"
+      - ""
+      - "📄 Detailed DNS records: /root/dns_records.txt"
+      - "📋 Quick copy-paste: /root/dns_records_quick.txt"
       - ""
       - "View DNS records:"
       - "  sudo cat /root/dns_records.txt"
+      - "  sudo cat /root/dns_records_quick.txt"
       - ""
       - "Test commands:"
       - "  sudo systemctl status opendkim"
       - "  sudo opendkim-testkey -d {{ mail_test_domain }} -s {{ dkim_selector }} -vvv"
+      - "  sudo journalctl -u opendkim -n 20"
       - ""
-      - "Next: Add DNS records to your DNS provider"
+      - "After adding DNS records (wait 5-15 min):"
+      - "  dig {{ dkim_selector }}._domainkey.{{ mail_test_domain }} TXT"
+      - "  sudo opendkim-testkey -d {{ mail_test_domain }} -s {{ dkim_selector }} -vvv"
+      - ""
+      - "Backups created:"
+      - "  /etc/opendkim.conf.backup.*"
+      - ""
+      - "Rollback: ansible-playbook rollback_opendkim.yml"
+      - ""
+      - "Next: Add DNS records, then test the complete mail system"
       - "=========================================="

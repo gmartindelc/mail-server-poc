@@ -20,7 +20,7 @@
   tasks:
     - name: Include mail system testing playbook
       ansible.builtin.include_tasks:
-        file: reusable/test_mail_system.yml
+        file: test_mail_system.yml
       tags:
         - test
         - mail

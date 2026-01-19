@@ -1,0 +1,105 @@
+---
+# Rollback Playbook: Restore OpenDKIM Configuration
+# 
+# Purpose: Restore OpenDKIM to its pre-Ansible configuration
+# Usage: ansible-playbook rollback_opendkim.yml
+
+- name: Rollback OpenDKIM Configuration
+  hosts: all
+  become: yes
+  gather_facts: yes
+  
+  tasks:
+    - name: Check for backup files
+      ansible.builtin.find:
+        paths: /etc
+        patterns: "opendkim.conf.backup*"
+      register: backup_files
+
+    - name: Display backup status
+      ansible.builtin.debug:
+        msg: "Found {{ backup_files.files | length }} OpenDKIM backup(s)"
+
+    - name: Stop OpenDKIM
+      ansible.builtin.systemd:
+        name: opendkim
+        state: stopped
+
+    - name: Backup current configuration before rollback
+      ansible.builtin.copy:
+        src: /etc/opendkim.conf
+        dest: /etc/opendkim.conf.pre-rollback
+        remote_src: yes
+      failed_when: false
+
+    - name: Restore opendkim.conf from backup (if exists)
+      ansible.builtin.copy:
+        src: "{{ backup_files.files | sort(attribute='mtime', reverse=true) | first | attr('path') }}"
+        dest: /etc/opendkim.conf
+        remote_src: yes
+      when: backup_files.files | length > 0
+
+    - name: Remove OpenDKIM configuration files (if no backup)
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: absent
+      loop:
+        - /etc/opendkim/KeyTable
+        - /etc/opendkim/SigningTable
+        - /etc/opendkim/TrustedHosts
+      when: backup_files.files | length == 0
+
+    - name: Remove Ansible marker file
+      ansible.builtin.file:
+        path: /etc/opendkim/opendkim.conf.ansible_managed
+        state: absent
+
+    - name: Remove OpenDKIM milter configuration from Postfix
+      ansible.builtin.blockinfile:
+        path: /etc/postfix/main.cf
+        marker: "# {mark} ANSIBLE MANAGED - OpenDKIM Integration"
+        state: absent
+
+    - name: Restart Postfix to apply changes
+      ansible.builtin.systemd:
+        name: postfix
+        state: restarted
+
+    - name: Start OpenDKIM (if backup existed)
+      ansible.builtin.systemd:
+        name: opendkim
+        state: started
+      when: backup_files.files | length > 0
+      failed_when: false
+
+    - name: Disable OpenDKIM (if no backup - fresh install)
+      ansible.builtin.systemd:
+        name: opendkim
+        state: stopped
+        enabled: no
+      when: backup_files.files | length == 0
+
+    - name: Display rollback summary
+      ansible.builtin.debug:
+        msg:
+          - "=========================================="
+          - "OpenDKIM Rollback Complete"
+          - "=========================================="
+          - ""
+          - "{{ '✓ Configuration restored from backup' if backup_files.files | length > 0 else '✓ OpenDKIM configuration removed (was fresh install)' }}"
+          - "✓ Current config backed up to: /etc/opendkim.conf.pre-rollback"
+          - "✓ Postfix milter integration removed"
+          - "✓ Postfix service restarted"
+          - "{{ '✓ OpenDKIM service restarted' if backup_files.files | length > 0 else '✓ OpenDKIM service stopped' }}"
+          - ""
+          - "Note: DKIM keys remain in /etc/opendkim/keys/"
+          - "      (preserved for potential reuse)"
+          - ""
+          - "Verify status:"
+          - "  sudo systemctl status opendkim"
+          - "  sudo postconf | grep milter"
+          - ""
+          - "To completely remove OpenDKIM:"
+          - "  sudo apt remove opendkim opendkim-tools"
+          - "  sudo rm -rf /etc/opendkim"
+          - "=========================================="
