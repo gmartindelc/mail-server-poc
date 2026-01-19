@@ -227,7 +227,7 @@ docker exec mailserver-postgres psql -U postgres -d mailserver -c "\du"
 ### Permission Denied
 ```bash
 # Check user privileges
-docker exec mailserver-postgres psql -U postgres -d mailserver -c "\dp virtual_users"
+docker exec mailserver-postgres psql -U postgres -d mailserver -c "\dp mailbox"
 ```
 
 ---
