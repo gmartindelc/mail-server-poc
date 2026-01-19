@@ -5,7 +5,7 @@ Production-ready Ansible playbooks for deploying a complete mail server stack (P
 ## Directory Structure
 
 ```
-improved_playbooks/
+ansible/
 ├── ansible.cfg                          # Your Ansible configuration
 ├── inventory.yml                        # Your dynamic inventory
 ├── group_vars/
@@ -108,6 +108,95 @@ export ANSIBLE_HOST="10.100.0.25"
 ansible-playbook playbooks/task_2_2_1.yml
 ```
 
+## Base System Tasks (Task Groups 1.2–1.5)
+
+These tasks prepare the OS, users, security, directories, and firewall. Run in order.
+
+### Task Group 1.2 — System User Administration
+
+Run with wrapper:
+```bash
+./run_task.sh 1.2.1  # Modify sudoers (NOPASSWD)
+./run_task.sh 1.2.2  # Remove linuxuser
+./run_task.sh 1.2.3  # Create admin user (phalkonadmin)
+./run_task.sh 1.2.4  # Setup SSH key authentication
+./run_task.sh 1.2.5  # Test SSH connection
+./run_task.sh 1.2.6  # Install Docker (compose)
+./run_task.sh 1.2.7  # Cleanup and verification
+```
+Or directly with Ansible:
+```bash
+ansible-playbook playbooks/task_1.2.1.yml
+ansible-playbook playbooks/task_1.2.2.yml
+ansible-playbook playbooks/task_1.2.3.yml
+ansible-playbook playbooks/task_1.2.4.yml
+ansible-playbook playbooks/task_1.2.5.yml
+ansible-playbook playbooks/task_1.2.6.yml
+ansible-playbook playbooks/task_1.2.7.yml
+```
+
+### Task Group 1.3 — System Hardening
+
+Run with wrapper:
+```bash
+./run_task.sh 1.3.1  # Basic hardening (SSH, UFW base, auto-updates)
+./run_task.sh 1.3.2  # WireGuard VPN install/config
+./run_task.sh 1.3.3  # Verify network interfaces
+./run_task.sh 1.3.4  # SSH depends on VPN + VPN-only SSH
+./run_task.sh 1.3.5  # Install and configure fail2ban
+```
+Or directly with Ansible:
+```bash
+ansible-playbook playbooks/task_1.3.1.yml
+ansible-playbook playbooks/task_1.3.2.yml
+ansible-playbook playbooks/task_1.3.3.yml
+ansible-playbook playbooks/task_1.3.4.yml
+ansible-playbook playbooks/task_1.3.5.yml
+```
+
+### Task Group 1.4 — Directory Structure & Storage
+
+Run with wrapper:
+```bash
+./run_task.sh 1.4.1  # Create mail and postgres directories
+./run_task.sh 1.4.2  # Set permissions and ownerships
+./run_task.sh 1.4.3  # Prepare quota tools (documentation approach)
+```
+Or directly with Ansible:
+```bash
+ansible-playbook playbooks/task_1.4.1.yml
+ansible-playbook playbooks/task_1.4.2.yml
+ansible-playbook playbooks/task_1.4.3.yml
+```
+
+### Task Group 1.5 — Firewall Configuration (UFW)
+
+Run with wrapper:
+```bash
+./run_task.sh 1.5.1  # Configure UFW firewall
+```
+Or directly with Ansible:
+```bash
+ansible-playbook playbooks/task_1_5_1.yml
+```
+
+## Database Layer Tasks (Task Group 2.1)
+
+Run with wrapper:
+```bash
+./run_task.sh 2.1.1  # Deploy PostgreSQL container (vpn-only)
+./run_task.sh 2.1.2  # Configure mail database (domain/mailbox/alias)
+./run_task.sh 2.1.3  # Configure backups + WAL
+./run_task.sh 2.1.4  # Verify container, users, schema, backups
+```
+Or directly with Ansible:
+```bash
+ansible-playbook playbooks/task_2.1.1.yml
+ansible-playbook playbooks/task_2.1.2.yml
+ansible-playbook playbooks/task_2.1.3.yml
+ansible-playbook playbooks/task_2.1.4.yml
+```
+
 ## Detailed Usage
 
 ### Task 2.2.1: Install Postfix
@@ -158,7 +247,7 @@ ansible-playbook playbooks/task_2_2_2.yml
 2. Inline SQL config (no external dovecot-sql.conf.ext)
 3. Comments out `auth_username_format = %u`
 4. Uses `%{user}` variable syntax
-5. Returns `mail` field (not `maildir`) from queries
+5. Uses mailbox schema with maildir path stored in mailbox.maildir
 
 ### Task 2.2.3: Install OpenDKIM
 
@@ -433,7 +522,15 @@ Your PostgreSQL database (`mailserver`) should have these tables:
 CREATE TABLE domain (
     domain VARCHAR(255) PRIMARY KEY,
     description TEXT,
-    active BOOLEAN DEFAULT true
+    aliases INTEGER DEFAULT 0,
+    mailboxes INTEGER DEFAULT 0,
+    maxquota BIGINT DEFAULT 0,
+    quota BIGINT DEFAULT 0,
+    transport VARCHAR(255) DEFAULT 'virtual',
+    backupmx BOOLEAN DEFAULT false,
+    active BOOLEAN DEFAULT true,
+    created TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    modified TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 ```
 
@@ -443,8 +540,14 @@ CREATE TABLE mailbox (
     username VARCHAR(255) PRIMARY KEY,
     password VARCHAR(255) NOT NULL,
     name VARCHAR(255),
-    maildir VARCHAR(255),
-    active BOOLEAN DEFAULT true
+    maildir VARCHAR(255) NOT NULL,
+    quota BIGINT DEFAULT 0,
+    local_part VARCHAR(255),
+    domain VARCHAR(255),
+    active BOOLEAN DEFAULT true,
+    created TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    modified TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT fk_mailbox_domain FOREIGN KEY (domain) REFERENCES domain(domain) ON DELETE CASCADE
 );
 ```
 
@@ -453,7 +556,11 @@ CREATE TABLE mailbox (
 CREATE TABLE alias (
     address VARCHAR(255) PRIMARY KEY,
     goto TEXT NOT NULL,
-    active BOOLEAN DEFAULT true
+    domain VARCHAR(255),
+    active BOOLEAN DEFAULT true,
+    created TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    modified TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT fk_alias_domain FOREIGN KEY (domain) REFERENCES domain(domain) ON DELETE CASCADE
 );
 ```
 
@@ -466,12 +573,14 @@ VALUES ('testdomain.local', true);
 
 -- Add test user (password: TestPass123!)
 -- Generate password with: doveadm pw -s SHA512-CRYPT
-INSERT INTO mailbox (username, password, name, maildir, active)
+INSERT INTO mailbox (username, password, name, maildir, domain, local_part, active)
 VALUES (
     'testuser1@testdomain.local',
     '{SHA512-CRYPT}$6$...',  -- Your hashed password
     'Test User',
     'testdomain.local/testuser1/',
+    'testdomain.local',
+    'testuser1',
     true
 );
 ```
