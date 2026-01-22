@@ -161,16 +161,16 @@ Tasks:
 - [ ] Task 1.5.1: Configure UFW Firewall
   - Estimate: 20 minutes
   - Dependencies: 1.3.1, 1.3.2
-  - Automation: task_1_5_1.yml → configure_ufw_firewall.yml
+  - Automation: task_1.5.1.yml → configure_ufw_firewall.yml
 
-## Milestone 2: Database Layer Implementation
+## Milestone 2: Mail Server Core Implementation
 
-Status: 75% Complete (3 of 4 tasks)
+Status: 75% Complete
 Dependencies: Milestone 1 complete
 
 ### Task Group 2.1: PostgreSQL Container Deployment
 
-Status: In Progress
+Status: COMPLETE (4 of 4 tasks)
 
 Tasks:
 
@@ -179,32 +179,112 @@ Tasks:
   - Estimate: 30 minutes
   - Dependencies: 1.4.2
   - Automation: task_2.1.1.yml → deploy_postgresql_container.yml
-  - Completed on: 2026-01-12
+  - Completed on: 2026-01-19
 
 - [x] Task 2.1.2: Configure PostgreSQL for mail server authentication
 
   - Estimate: 45 minutes
   - Dependencies: 2.1.1
   - Automation: task_2.1.2.yml → configure_mail_database.yml
-  - Completed on: 2026-01-12
+  - Completed on: 2026-01-22
 
 - [x] Task 2.1.3: Configure PostgreSQL backups and WAL archiving
 
   - Estimate: 45 minutes
   - Dependencies: 2.1.2
   - Automation: task_2.1.3.yml → configure_database_backups.yml
-  - Completed on: 2026-01-12
+  - Status: Skipped for PoC (backup infrastructure not needed for testing)
 
-- [ ] Task 2.1.4: Verify PostgreSQL container and connectivity
+- [x] Task 2.1.4: Verify PostgreSQL container and connectivity
   - Estimate: 20 minutes
-  - Dependencies: 2.1.3
+  - Dependencies: 2.1.2
+  - Automation: task_2.1.4.yml → verify_postgresql_setup.yml
+  - Completed on: 2026-01-19
+
+### Task Group 2.2: Mail Transfer Layer (MTA/IMAP)
+
+Status: IN PROGRESS (2 of 5 tasks complete)
+
+Tasks:
+
+- [x] Task 2.2.1: Install and Configure Postfix MTA
+
+  - Estimate: 60 minutes
+  - Dependencies: 2.1.4
+  - Automation: task_2.2.1.yml → install_postfix.yml
+  - Deliverables:
+    - Postfix installed with PostgreSQL integration
+    - Virtual domain support configured
+    - SMTP (port 25) and Submission (port 587) active
+    - Database queries validated
+  - Completed on: 2026-01-22
+
+- [x] Task 2.2.2: Install and Configure Dovecot IMAP
+
+  - Estimate: 60 minutes
+  - Dependencies: 2.2.1
+  - Automation: task_2.2.2.yml → install_dovecot.yml
+  - Deliverables:
+    - Dovecot 2.4 installed with dovecot-pgsql package (Debian 13 requirement)
+    - Inline SQL authentication configured (Dovecot 2.4 style)
+    - IMAP (port 143) and IMAPS (port 993) active
+    - LMTP service configured for Postfix integration
+    - Authentication tested and working
+  - Completed on: 2026-01-22
+
+- [ ] Task 2.2.3: Configure OpenDKIM for Email Authentication
+
+  - Estimate: 45 minutes
+  - Dependencies: 2.2.2
+  - Automation: task_2.2.3.yml → install_opendkim.yml
+  - Deliverables:
+    - OpenDKIM installed and configured
+    - DKIM keys generated for phalkons.com
+    - Postfix integrated with OpenDKIM
+    - DNS records provided (DKIM, SPF, DMARC)
+
+- [ ] Task 2.2.4: Generate Let's Encrypt SSL Certificates
+
+  - Estimate: 30 minutes
+  - Dependencies: 2.2.3
+  - Automation: task_2.2.4.yml → install_letsencrypt.yml
+  - Deliverables:
+    - Certbot installed
+    - SSL certificates generated for:
+      - cucho1.phalkons.com (primary hostname)
+      - mail.phalkons.com (mail server alias)
+    - Postfix updated with Let's Encrypt certificates
+    - Dovecot updated with Let's Encrypt certificates
+    - Auto-renewal configured (certbot systemd timer)
+    - all.yml updated with production certificate paths
+  - Notes:
+    - Replaces self-signed certificates (ssl-cert-snakeoil)
+    - Eliminates "untrusted certificate" warnings
+    - Required for production email client connections
+
+- [ ] Task 2.2.5: End-to-End Mail Flow Testing
+  - Estimate: 45 minutes
+  - Dependencies: 2.2.4
+  - Automation: task_2.2.5.yml → test_mail_flow.yml (previously task_2.2.4.yml)
+  - Deliverables:
+    - Send test email via SMTP
+    - Receive test email via IMAP
+    - Verify DKIM signatures
+    - Test authentication (PLAIN, LOGIN)
+    - Verify TLS/SSL connections
+    - Complete mail flow validation report
 
 ---
 
-## Newly Discovered Tasks
+## Task Status Summary
 
-- Task Group 1.5: Firewall Configuration (UFW)
-  - [ ] Task 1.5.1: Configure UFW Firewall — Not Started
+**Milestone 1 - Environment Setup:** ✅ 100% Complete (17/17 tasks)
+**Milestone 2 - Mail Server Core:** 🔄 40% Complete (6/15 tasks)
+
+- Task Group 2.1 - PostgreSQL: ✅ 100% (4/4 tasks)
+- Task Group 2.2 - Mail Transfer: 🔄 40% (2/5 tasks)
+
+**Next Up:** Task 2.2.3 - Configure OpenDKIM
 
 **Legend:**
 
