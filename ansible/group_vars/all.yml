@@ -1,6 +1,7 @@
 ---
 # Group Variables for Mail Server
 # Location: ansible/group_vars/all.yml
+# CORRECTED: Use phalkons.com and VPN IP for PostgreSQL
 
 # Server Network Configuration
 mail_server_public_ip: "45.32.207.84"
@@ -11,17 +12,17 @@ mail_server_vpn_network: "10.100.0.0/24"
 mail_server_hostname: "cucho1.phalkons.com"
 mail_server_domain: "phalkons.com"
 
-# Test/Demo Domain
-mail_test_domain: "testdomain.local"
+# Test/Demo Domain - CORRECTED to use phalkons.com
+mail_test_domain: "phalkons.com"
 
-# Database Configuration
-postgres_host: "localhost"
+# Database Configuration - CORRECTED to use VPN IP
+postgres_host: "10.100.0.25"
 postgres_port: 5432
 postgres_db: "mailserver"
 postgres_container_name: "mailserver-postgres"
 postgres_admin_user: "postgres"
 
-# Database Service Users
+# Database Service Users - CONSISTENT naming
 postgres_mail_user: "mailuser"
 postgres_postfix_user: "postfix_user"
 postgres_dovecot_user: "dovecot_user"
@@ -75,7 +76,7 @@ dovecot_mail_location: "maildir:{{ mail_vmail_dir }}/%d/%n"
 mail_test_username: "testuser1"
 mail_test_password: "TestPass123!"
 mail_test_email: "{{ mail_test_username }}@{{ mail_test_domain }}"
-mail_test_alias: "admin@{{ mail_test_domain }}"
+mail_test_alias: "test@{{ mail_test_domain }}"
 
 # Database Connection Templates
 postgres_admin_connection: "postgresql://{{ postgres_admin_user }}:%s@{{ postgres_host }}:{{ postgres_port }}/{{ postgres_db }}"

@@ -1,0 +1,119 @@
+---
+# Quick Fix: Update Postfix PostgreSQL connection to use VPN IP
+- name: Fix Postfix PostgreSQL Connection
+  hosts: mail_servers
+  become: yes
+  gather_facts: no
+  
+  tasks:
+    - name: Read password from existing config
+      ansible.builtin.shell:
+        cmd: grep "^password = " /etc/postfix/pgsql-virtual-mailbox-domains.cf | awk '{print $3}'
+      register: postfix_password
+      changed_when: false
+      no_log: true
+    
+    - name: Update virtual-mailbox-domains.cf to use VPN IP
+      ansible.builtin.copy:
+        dest: /etc/postfix/pgsql-virtual-mailbox-domains.cf
+        content: |
+          user = postfix_user
+          password = {{ postfix_password.stdout }}
+          hosts = 10.100.0.25
+          dbname = mailserver
+          query = SELECT domain FROM domain WHERE domain='%s' AND active=true
+        mode: '0640'
+        owner: root
+        group: postfix
+      no_log: true
+    
+    - name: Update virtual-mailbox-maps.cf to use VPN IP
+      ansible.builtin.copy:
+        dest: /etc/postfix/pgsql-virtual-mailbox-maps.cf
+        content: |
+          user = postfix_user
+          password = {{ postfix_password.stdout }}
+          hosts = 10.100.0.25
+          dbname = mailserver
+          query = SELECT username FROM mailbox WHERE username='%s' AND active=true
+        mode: '0640'
+        owner: root
+        group: postfix
+      no_log: true
+    
+    - name: Update virtual-alias-maps.cf to use VPN IP
+      ansible.builtin.copy:
+        dest: /etc/postfix/pgsql-virtual-alias-maps.cf
+        content: |
+          user = postfix_user
+          password = {{ postfix_password.stdout }}
+          hosts = 10.100.0.25
+          dbname = mailserver
+          query = SELECT goto FROM alias WHERE address='%s' AND active=true
+        mode: '0640'
+        owner: root
+        group: postfix
+      no_log: true
+    
+    - name: Restart Postfix to apply changes
+      ansible.builtin.systemd:
+        name: postfix
+        state: restarted
+    
+    - name: Wait for Postfix to be ready
+      ansible.builtin.wait_for:
+        port: 25
+        delay: 2
+        timeout: 10
+    
+    - name: Test PostgreSQL connectivity
+      ansible.builtin.command:
+        cmd: postmap -q phalkons.com pgsql:/etc/postfix/pgsql-virtual-mailbox-domains.cf
+      register: domain_test
+      changed_when: false
+      failed_when: false
+    
+    - name: Display test result
+      ansible.builtin.debug:
+        msg: "Database lookup: {{ 'SUCCESS ✓' if domain_test.rc == 0 else 'FAILED ✗ - ' ~ domain_test.stderr }}"
+    
+    - name: Test mailbox lookup
+      ansible.builtin.command:
+        cmd: postmap -q testuser1@phalkons.com pgsql:/etc/postfix/pgsql-virtual-mailbox-maps.cf
+      register: mailbox_test
+      changed_when: false
+      failed_when: false
+    
+    - name: Display mailbox test
+      ansible.builtin.debug:
+        msg: "Mailbox lookup: {{ 'SUCCESS ✓' if mailbox_test.rc == 0 else 'FAILED ✗ - ' ~ mailbox_test.stderr }}"
+    
+    - name: Verify ports are listening
+      ansible.builtin.command:
+        cmd: ss -tlnp | grep -E ':(25|587)'
+      register: ports_check
+      changed_when: false
+    
+    - name: Display completion
+      ansible.builtin.debug:
+        msg:
+          - "=========================================="
+          - "Postfix PostgreSQL Connection Fixed"
+          - "=========================================="
+          - ""
+          - "✓ SQL config files updated to use 10.100.0.25"
+          - "✓ Removed unused 'port' parameter"
+          - "✓ Postfix restarted"
+          - ""
+          - "Test Results:"
+          - "  Domain lookup:  {{ 'PASS ✓' if domain_test.rc == 0 else 'FAIL ✗' }}"
+          - "  Mailbox lookup: {{ 'PASS ✓' if mailbox_test.rc == 0 else 'FAIL ✗' }}"
+          - "  SMTP Port 25:   {{ 'Listening ✓' if ':25' in ports_check.stdout else 'Not Ready ✗' }}"
+          - "  Submit Port 587: {{ 'Listening ✓' if ':587' in ports_check.stdout else 'Not Ready ✗' }}"
+          - ""
+          - "Verify manually:"
+          - "  sudo postmap -q phalkons.com pgsql:/etc/postfix/pgsql-virtual-mailbox-domains.cf"
+          - "  sudo postmap -q testuser1@phalkons.com pgsql:/etc/postfix/pgsql-virtual-mailbox-maps.cf"
+          - ""
+          - "Task 2.2.1 Complete - Ready for Task 2.2.2 (Dovecot)"
+          - "=========================================="

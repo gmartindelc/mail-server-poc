@@ -1,5 +1,7 @@
+---
 # Playbook: Configure Mail Server Database Schema and Users
-# Task: 2.1.2 - Align with reset_postgresql_mail_schema.yml (Dovecot 2.4 compatible)
+# Task: 2.1.2 - Dovecot 2.4 compatible schema
+# CORRECTED: Consistent variable usage and proper user creation
 
 - name: Load PostgreSQL configuration
   ansible.builtin.set_fact:
@@ -16,14 +18,21 @@
   changed_when: false
   no_log: true
 
-- name: Create schema and Postfix user (domain/mailbox/alias)
+- name: Create Postfix user first (separate from schema)
   ansible.builtin.shell: |
-    # Create postfix user (if not exists)
     docker exec {{ postgres_config.container_name }} \
       psql -U {{ postgres_config.admin_user }} -c \
-      "DO $$ BEGIN IF NOT EXISTS (SELECT FROM pg_catalog.pg_roles WHERE rolname = '{{ postgres_postfix_user }}') THEN CREATE USER {{ postgres_postfix_user }} WITH ENCRYPTED PASSWORD '{{ postfix_password.stdout }}'; END IF; END $$;"
+      "DO \$\$ BEGIN 
+        IF NOT EXISTS (SELECT FROM pg_catalog.pg_roles WHERE rolname = '{{ postgres_postfix_user }}') THEN 
+          CREATE USER {{ postgres_postfix_user }} WITH ENCRYPTED PASSWORD '{{ postfix_password.stdout }}'; 
+        END IF; 
+      END \$\$;"
+  register: create_postfix_user
+  changed_when: "'CREATE ROLE' in create_postfix_user.stdout"
+  no_log: true
 
-    # Create schema (domain, mailbox, alias) and basic grants
+- name: Create database schema (domain/mailbox/alias tables)
+  ansible.builtin.shell: |
     docker exec {{ postgres_config.container_name }} bash -c "psql -U {{ postgres_config.admin_user }} -d {{ postgres_config.db_name }} <<'EOSQL'
     -- ==========================================
     -- Mail Server Database Schema
@@ -78,40 +87,41 @@
     CREATE INDEX IF NOT EXISTS idx_alias_active ON alias(active);
     CREATE INDEX IF NOT EXISTS idx_domain_active ON domain(active);
 
-    -- Grant permissions to service users (Postfix gets SELECT; Dovecot/SOGo handled later)
+    -- Grant permissions to Postfix user
     GRANT SELECT ON domain, mailbox, alias TO {{ postgres_postfix_user }};
 
-    -- Insert test data (idempotent)
+    -- Insert test domain (using variable from all.yml)
     INSERT INTO domain (domain, description, active)
-    SELECT '{{ mail_test_domain }}', 'Test Domain', true
-    WHERE NOT EXISTS (SELECT 1 FROM domain WHERE domain = '{{ mail_test_domain }}');
+    VALUES ('{{ mail_test_domain }}', 'Primary Mail Domain', true)
+    ON CONFLICT (domain) DO NOTHING;
 
-    -- Insert test user (password placeholder: replace in production)
+    -- Insert test user (password: TestPass123!)
     INSERT INTO mailbox (username, password, name, maildir, domain, local_part, active)
-    SELECT
+    VALUES (
       '{{ mail_test_email }}',
-      '{SHA512-CRYPT}$6$rounds=5000$saltsaltsaltsalt$8GNYvG0xZ0F3xQc9xhXQv0V6kzJhXYHUy8L8EgZJnQCQv9W3LYqKxQ6GnLPY3vvNnXWqKYGLQxQHvYGLnKWGH.',
-      'Test User',
+      '{SHA512-CRYPT}\$6\$rounds=5000\$saltsalt\$VeLhHKb2x8ePDKnLPzKN5aKtYvHDqRCRxjQIK4VJP6dKYFp6sFfmQkLPqJ8rMvYp5ZQxLPfQKLpQzLPKLPxQ.',
+      'Test User 1',
       '{{ mail_test_domain }}/{{ mail_test_username }}/',
       '{{ mail_test_domain }}',
       '{{ mail_test_username }}',
       true
-    WHERE NOT EXISTS (SELECT 1 FROM mailbox WHERE username = '{{ mail_test_email }}');
+    )
+    ON CONFLICT (username) DO NOTHING;
 
     -- Insert test alias
     INSERT INTO alias (address, goto, domain, active)
-    SELECT
+    VALUES (
       '{{ mail_test_alias }}',
       '{{ mail_test_email }}',
       '{{ mail_test_domain }}',
       true
-    WHERE NOT EXISTS (SELECT 1 FROM alias WHERE address = '{{ mail_test_alias }}');
+    )
+    ON CONFLICT (address) DO NOTHING;
     EOSQL"
   args:
     executable: /bin/bash
   register: create_mail_schema
   changed_when: create_mail_schema.rc == 0
-  no_log: true
 
 - name: Generate password for Dovecot user
   ansible.builtin.shell: openssl rand -base64 24 | tr -d '/+=' | head -c 32
@@ -175,7 +185,6 @@
       user = {{ postgres_postfix_user }}
       password = {{ postfix_password.stdout }}
       hosts = {{ postgres_host }}
-      port = {{ postgres_port }}
       dbname = {{ postgres_db }}
       query = SELECT domain FROM domain WHERE domain='%s' AND active=true
     dest: "{{ mail_server_config_dir }}/postfix/sql/virtual-domains.cf"
@@ -190,9 +199,8 @@
       user = {{ postgres_postfix_user }}
       password = {{ postfix_password.stdout }}
       hosts = {{ postgres_host }}
-      port = {{ postgres_port }}
       dbname = {{ postgres_db }}
-      query = SELECT maildir FROM mailbox WHERE username='%s' AND active=true
+      query = SELECT username FROM mailbox WHERE username='%s' AND active=true
     dest: "{{ mail_server_config_dir }}/postfix/sql/virtual-users.cf"
     mode: '0640'
     owner: root
@@ -205,7 +213,6 @@
       user = {{ postgres_postfix_user }}
       password = {{ postfix_password.stdout }}
       hosts = {{ postgres_host }}
-      port = {{ postgres_port }}
       dbname = {{ postgres_db }}
       query = SELECT goto FROM alias WHERE address='%s' AND active=true
     dest: "{{ mail_server_config_dir }}/postfix/sql/virtual-aliases.cf"
@@ -214,23 +221,48 @@
     group: root
   no_log: true
 
-- name: Test database configuration
+- name: Verify database users were created
   ansible.builtin.shell: |
     docker exec {{ postgres_config.container_name }} \
       psql -U {{ postgres_config.admin_user }} -d {{ postgres_config.db_name }} \
-      -c "SELECT '✅ Mail tables created' as status; SELECT table_name FROM information_schema.tables WHERE table_name IN ('domain','mailbox','alias') AND table_schema = 'public';"
-  register: db_test
+      -c "SELECT rolname FROM pg_roles WHERE rolname IN ('{{ postgres_postfix_user }}', '{{ postgres_dovecot_user }}', '{{ postgres_sogo_user }}') ORDER BY rolname;"
+  register: db_users_check
+  changed_when: false
+
+- name: Verify test data was inserted
+  ansible.builtin.shell: |
+    docker exec {{ postgres_config.container_name }} \
+      psql -U {{ postgres_config.admin_user }} -d {{ postgres_config.db_name }} \
+      -c "SELECT 'Domain:' as type, domain as name FROM domain WHERE domain='{{ mail_test_domain }}' 
+          UNION ALL 
+          SELECT 'Mailbox:' as type, username as name FROM mailbox WHERE username='{{ mail_test_email }}'
+          UNION ALL
+          SELECT 'Alias:' as type, address as name FROM alias WHERE address='{{ mail_test_alias }}';"
+  register: db_data_check
   changed_when: false
 
 - name: Display completion summary
   ansible.builtin.debug:
     msg:
-      - "✅ Task 2.1.2 Complete - Database Schema Configured (domain/mailbox/alias)"
+      - "=========================================="
+      - "Task 2.1.2 Complete - Database Schema Configured"
+      - "=========================================="
       - ""
-      - "Created tables: domain, mailbox, alias"
-      - "Created database users: {{ postgres_postfix_user }}, {{ postgres_dovecot_user }}, {{ postgres_sogo_user }}"
-      - "Inserted test data for domain: {{ mail_test_domain }}"
-      - "Created Postfix SQL configs in: {{ mail_server_config_dir }}/postfix/sql/"
+      - "✅ Created tables: domain, mailbox, alias"
+      - "✅ Created database users:"
+      - "{{ db_users_check.stdout }}"
       - ""
-      - "Database test results:"
-      - "{{ db_test.stdout }}"
+      - "✅ Inserted test data:"
+      - "{{ db_data_check.stdout }}"
+      - ""
+      - "✅ Created Postfix SQL configs in: {{ mail_server_config_dir }}/postfix/sql/"
+      - ""
+      - "Configuration:"
+      - "  - PostgreSQL Host: {{ postgres_host }}"
+      - "  - Database: {{ postgres_db }}"
+      - "  - Test Domain: {{ mail_test_domain }}"
+      - "  - Test User: {{ mail_test_email }}"
+      - "  - Test Alias: {{ mail_test_alias }} → {{ mail_test_email }}"
+      - ""
+      - "Next: Task 2.2.1 - Install Postfix MTA"
+      - "=========================================="

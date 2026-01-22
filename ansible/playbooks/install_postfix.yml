@@ -1,15 +1,7 @@
 ---
 # Reusable Playbook: Install and Configure Postfix MTA
-# 
 # Purpose: Deploy Postfix mail transfer agent with PostgreSQL integration
-# Can be included by task wrappers or run standalone
-#
-# ENHANCEMENTS:
-# - Pre-flight validation for Debian 13
-# - Improved idempotency checks
-# - Standardized password retrieval
-# - Better error handling
-# - Rollback capability
+# CORRECTED: Uses consistent variables from all.yml
 
 - name: Pre-flight - Validate OS requirements
   ansible.builtin.assert:
@@ -43,36 +35,32 @@
     name: postfix
     state: stopped
   
-- name: Read Postfix database password (standardized method)
+- name: Check if SQL config files exist from database setup
+  ansible.builtin.stat:
+    path: /opt/mail_server/postfix/sql/virtual-domains.cf
+  register: sql_config_exists
+
+- name: Read password from existing SQL config file
   ansible.builtin.shell:
-    cmd: |
-      python3 -c "
-      import re
-      import sys
-      try:
-          with open('{{ postgres_credentials_file }}', 'r') as f:
-              content = f.read()
-              # Look for Postfix section and extract password
-              match = re.search(r'Postfix.*?Password:\s*(\S+)', content, re.DOTALL | re.IGNORECASE)
-              if match:
-                  print(match.group(1))
-              else:
-                  sys.exit(1)
-      except Exception as e:
-          print(f'Error: {e}', file=sys.stderr)
-          sys.exit(1)
-      "
-  register: postfix_db_password
+    cmd: grep "^password = " /opt/mail_server/postfix/sql/virtual-domains.cf | awk '{print $3}'
+  register: postfix_db_password_result
   changed_when: false
   no_log: true
-  failed_when: postfix_db_password.rc != 0
+  when: sql_config_exists.stat.exists
+
+- name: Set password variable
+  ansible.builtin.set_fact:
+    postfix_db_password: "{{ postfix_db_password_result.stdout }}"
+  no_log: true
+  when: sql_config_exists.stat.exists
 
 - name: Verify password was retrieved
   ansible.builtin.assert:
     that:
-      - postfix_db_password.stdout != ""
-      - postfix_db_password.stdout | length > 8
-    fail_msg: "Failed to retrieve valid Postfix password from {{ postgres_credentials_file }}"
+      - postfix_db_password is defined
+      - postfix_db_password != ""
+      - postfix_db_password | length > 8
+    fail_msg: "Failed to retrieve valid Postfix password from /opt/mail_server/postfix/sql/"
     success_msg: "Postfix database credentials retrieved successfully"
 
 - name: Backup original main.cf (if not already backed up)
@@ -124,47 +112,22 @@
     group: root
     mode: '0755'
 
-- name: Create PostgreSQL lookup file for virtual domains
+- name: Copy SQL config files to /etc/postfix with correct naming
   ansible.builtin.copy:
-    dest: /etc/postfix/pgsql-virtual-mailbox-domains.cf
-    content: |
-      hosts = {{ postgres_host }}
-      user = {{ postgres_postfix_user }}
-      password = {{ postfix_db_password.stdout }}
-      dbname = {{ postgres_db }}
-      query = SELECT domain FROM domain WHERE domain='%s' AND active=true
+    src: "{{ item.src }}"
+    dest: "{{ item.dest }}"
+    remote_src: yes
     mode: '0640'
     owner: root
     group: postfix
-  no_log: true
-
-- name: Create PostgreSQL lookup file for virtual mailboxes
-  ansible.builtin.copy:
-    dest: /etc/postfix/pgsql-virtual-mailbox-maps.cf
-    content: |
-      hosts = {{ postgres_host }}
-      user = {{ postgres_postfix_user }}
-      password = {{ postfix_db_password.stdout }}
-      dbname = {{ postgres_db }}
-      query = SELECT username FROM mailbox WHERE username='%s' AND active=true
-    mode: '0640'
-    owner: root
-    group: postfix
-  no_log: true
-
-- name: Create PostgreSQL lookup file for virtual aliases
-  ansible.builtin.copy:
-    dest: /etc/postfix/pgsql-virtual-alias-maps.cf
-    content: |
-      hosts = {{ postgres_host }}
-      user = {{ postgres_postfix_user }}
-      password = {{ postfix_db_password.stdout }}
-      dbname = {{ postgres_db }}
-      query = SELECT goto FROM alias WHERE address='%s' AND active=true
-    mode: '0640'
-    owner: root
-    group: postfix
-  no_log: true
+  loop:
+    - src: /opt/mail_server/postfix/sql/virtual-domains.cf
+      dest: /etc/postfix/pgsql-virtual-mailbox-domains.cf
+    - src: /opt/mail_server/postfix/sql/virtual-users.cf
+      dest: /etc/postfix/pgsql-virtual-mailbox-maps.cf
+    - src: /opt/mail_server/postfix/sql/virtual-aliases.cf
+      dest: /etc/postfix/pgsql-virtual-alias-maps.cf
+  when: sql_config_exists.stat.exists
 
 - name: Backup original master.cf (if not already backed up)
   ansible.builtin.copy:
@@ -239,7 +202,7 @@
     msg: "Domain lookup: {{ 'SUCCESS - Domain found in database' if domain_test.rc == 0 else 'FAILED - Check PostgreSQL connection and data' }}"
 
 - name: Verify Postfix is listening on required ports
-  ansible.builtin.command:
+  ansible.builtin.shell:
     cmd: ss -tlnp | grep -E ':(25|587)'
   register: postfix_ports
   changed_when: false
@@ -271,14 +234,12 @@
       - "Test commands:"
       - "  sudo postfix status"
       - "  sudo postmap -q {{ mail_test_domain }} pgsql:/etc/postfix/pgsql-virtual-mailbox-domains.cf"
-      - "  sudo postmap -q testuser1@{{ mail_test_domain }} pgsql:/etc/postfix/pgsql-virtual-mailbox-maps.cf"
+      - "  sudo postmap -q {{ mail_test_email }} pgsql:/etc/postfix/pgsql-virtual-mailbox-maps.cf"
       - "  sudo journalctl -u postfix -n 20"
       - ""
       - "Configuration files backed up to:"
       - "  /etc/postfix/main.cf.backup.*"
       - "  /etc/postfix/master.cf.backup"
-      - ""
-      - "Rollback: ansible-playbook rollback_postfix.yml"
       - ""
       - "Next: Configure Dovecot IMAP/POP3 server"
       - "=========================================="

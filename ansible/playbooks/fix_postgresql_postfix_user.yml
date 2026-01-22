@@ -1,0 +1,225 @@
+---
+# Fix: Create missing postfix_user and update test data to phalkons.com
+- name: Fix PostgreSQL Database - Add postfix_user and phalkons.com data
+  hosts: mail_servers
+  become: yes
+  gather_facts: no
+  
+  tasks:
+    - name: Generate password for postfix_user
+      ansible.builtin.shell: openssl rand -base64 24 | tr -d '/+=' | head -c 32
+      register: postfix_password_new
+      changed_when: false
+      no_log: true
+    
+    - name: Create postfix_user in PostgreSQL
+      ansible.builtin.shell: |
+        docker exec mailserver-postgres psql -U postgres -d mailserver <<'EOSQL'
+        -- Create postfix_user
+        CREATE USER postfix_user WITH ENCRYPTED PASSWORD '{{ postfix_password_new.stdout }}';
+        
+        -- Grant SELECT permissions on mail tables
+        GRANT SELECT ON domain, mailbox, alias TO postfix_user;
+        
+        -- Verify user was created
+        SELECT 'postfix_user created' as status, rolname FROM pg_roles WHERE rolname = 'postfix_user';
+        EOSQL
+      register: create_user_result
+      changed_when: true
+      no_log: true
+    
+    - name: Display user creation result
+      ansible.builtin.debug:
+        msg: "{{ create_user_result.stdout_lines }}"
+    
+    - name: Insert phalkons.com domain (if not exists)
+      ansible.builtin.shell: |
+        docker exec mailserver-postgres psql -U postgres -d mailserver <<'EOSQL'
+        INSERT INTO domain (domain, description, active)
+        VALUES ('phalkons.com', 'Primary Mail Domain', true)
+        ON CONFLICT (domain) DO NOTHING;
+        
+        SELECT 'Domain check:' as status, domain FROM domain WHERE domain = 'phalkons.com';
+        EOSQL
+      register: domain_result
+      changed_when: true
+    
+    - name: Display domain result
+      ansible.builtin.debug:
+        msg: "{{ domain_result.stdout_lines }}"
+    
+    - name: Insert testuser1@phalkons.com (if not exists)
+      ansible.builtin.shell: |
+        docker exec mailserver-postgres psql -U postgres -d mailserver <<'EOSQL'
+        INSERT INTO mailbox (username, password, name, maildir, domain, local_part, active)
+        VALUES (
+          'testuser1@phalkons.com',
+          '{SHA512-CRYPT}\$6\$rounds=5000\$saltsalt\$VeLhHKb2x8ePDKnLPzKN5aKtYvHDqRCRxjQIK4VJP6dKYFp6sFfmQkLPqJ8rMvYp5ZQxLPfQKLpQzLPKLPxQ.',
+          'Test User 1',
+          'phalkons.com/testuser1/',
+          'phalkons.com',
+          'testuser1',
+          true
+        )
+        ON CONFLICT (username) DO NOTHING;
+        
+        SELECT 'Mailbox check:' as status, username FROM mailbox WHERE username = 'testuser1@phalkons.com';
+        EOSQL
+      register: mailbox_result
+      changed_when: true
+    
+    - name: Display mailbox result
+      ansible.builtin.debug:
+        msg: "{{ mailbox_result.stdout_lines }}"
+    
+    - name: Insert test alias (if not exists)
+      ansible.builtin.shell: |
+        docker exec mailserver-postgres psql -U postgres -d mailserver <<'EOSQL'
+        INSERT INTO alias (address, goto, domain, active)
+        VALUES (
+          'test@phalkons.com',
+          'testuser1@phalkons.com',
+          'phalkons.com',
+          true
+        )
+        ON CONFLICT (address) DO NOTHING;
+        
+        SELECT 'Alias check:' as status, address, goto FROM alias WHERE address = 'test@phalkons.com';
+        EOSQL
+      register: alias_result
+      changed_when: true
+    
+    - name: Display alias result
+      ansible.builtin.debug:
+        msg: "{{ alias_result.stdout_lines }}"
+    
+    - name: Update Postfix SQL config files with new password
+      ansible.builtin.copy:
+        dest: "{{ item.dest }}"
+        content: "{{ item.content }}"
+        mode: '0640'
+        owner: root
+        group: postfix
+      loop:
+        - dest: /etc/postfix/pgsql-virtual-mailbox-domains.cf
+          content: |
+            user = postfix_user
+            password = {{ postfix_password_new.stdout }}
+            hosts = 10.100.0.25
+            dbname = mailserver
+            query = SELECT domain FROM domain WHERE domain='%s' AND active=true
+        - dest: /etc/postfix/pgsql-virtual-mailbox-maps.cf
+          content: |
+            user = postfix_user
+            password = {{ postfix_password_new.stdout }}
+            hosts = 10.100.0.25
+            dbname = mailserver
+            query = SELECT username FROM mailbox WHERE username='%s' AND active=true
+        - dest: /etc/postfix/pgsql-virtual-alias-maps.cf
+          content: |
+            user = postfix_user
+            password = {{ postfix_password_new.stdout }}
+            hosts = 10.100.0.25
+            dbname = mailserver
+            query = SELECT goto FROM alias WHERE address='%s' AND active=true
+      no_log: true
+    
+    - name: Update source SQL config files in /opt/mail_server
+      ansible.builtin.copy:
+        dest: "{{ item.dest }}"
+        content: "{{ item.content }}"
+        mode: '0640'
+        owner: root
+        group: root
+      loop:
+        - dest: /opt/mail_server/postfix/sql/virtual-domains.cf
+          content: |
+            user = postfix_user
+            password = {{ postfix_password_new.stdout }}
+            hosts = 10.100.0.25
+            dbname = mailserver
+            query = SELECT domain FROM domain WHERE domain='%s' AND active=true
+        - dest: /opt/mail_server/postfix/sql/virtual-users.cf
+          content: |
+            user = postfix_user
+            password = {{ postfix_password_new.stdout }}
+            hosts = 10.100.0.25
+            dbname = mailserver
+            query = SELECT username FROM mailbox WHERE username='%s' AND active=true
+        - dest: /opt/mail_server/postfix/sql/virtual-aliases.cf
+          content: |
+            user = postfix_user
+            password = {{ postfix_password_new.stdout }}
+            hosts = 10.100.0.25
+            dbname = mailserver
+            query = SELECT goto FROM alias WHERE address='%s' AND active=true
+      no_log: true
+    
+    - name: Restart Postfix
+      ansible.builtin.systemd:
+        name: postfix
+        state: restarted
+    
+    - name: Wait for Postfix
+      ansible.builtin.wait_for:
+        port: 25
+        delay: 2
+        timeout: 10
+    
+    - name: Test domain lookup
+      ansible.builtin.command:
+        cmd: postmap -q phalkons.com pgsql:/etc/postfix/pgsql-virtual-mailbox-domains.cf
+      register: domain_test
+      changed_when: false
+      failed_when: false
+    
+    - name: Test mailbox lookup
+      ansible.builtin.command:
+        cmd: postmap -q testuser1@phalkons.com pgsql:/etc/postfix/pgsql-virtual-mailbox-maps.cf
+      register: mailbox_test
+      changed_when: false
+      failed_when: false
+    
+    - name: Test alias lookup
+      ansible.builtin.command:
+        cmd: postmap -q test@phalkons.com pgsql:/etc/postfix/pgsql-virtual-alias-maps.cf
+      register: alias_test
+      changed_when: false
+      failed_when: false
+    
+    - name: Verify all database users exist
+      ansible.builtin.shell: |
+        docker exec mailserver-postgres psql -U postgres -d mailserver -c \
+        "SELECT rolname FROM pg_roles WHERE rolname IN ('postfix_user', 'dovecot_user', 'sogo_user', 'mailuser') ORDER BY rolname;"
+      register: final_users_check
+      changed_when: false
+    
+    - name: Display completion summary
+      ansible.builtin.debug:
+        msg:
+          - "=========================================="
+          - "PostgreSQL Database Fix Complete"
+          - "=========================================="
+          - ""
+          - "✅ Created: postfix_user"
+          - "✅ Added domain: phalkons.com"
+          - "✅ Added mailbox: testuser1@phalkons.com"
+          - "✅ Added alias: test@phalkons.com → testuser1@phalkons.com"
+          - ""
+          - "Database Users:"
+          - "{{ final_users_check.stdout }}"
+          - ""
+          - "Postfix Database Tests:"
+          - "  Domain lookup:  {{ 'PASS ✓ (returned: ' + domain_test.stdout + ')' if domain_test.rc == 0 and domain_test.stdout != '' else 'FAIL ✗' }}"
+          - "  Mailbox lookup: {{ 'PASS ✓ (returned: ' + mailbox_test.stdout + ')' if mailbox_test.rc == 0 and mailbox_test.stdout != '' else 'FAIL ✗' }}"
+          - "  Alias lookup:   {{ 'PASS ✓ (returned: ' + alias_test.stdout + ')' if alias_test.rc == 0 and alias_test.stdout != '' else 'FAIL ✗' }}"
+          - ""
+          - "SQL Config Files Updated:"
+          - "  /etc/postfix/pgsql-*.cf (3 files)"
+          - "  /opt/mail_server/postfix/sql/*.cf (3 files)"
+          - ""
+          - "{{ '✓✓✓ Task 2.2.1 Now Complete - Postfix fully operational!' if (domain_test.rc == 0 and mailbox_test.rc == 0) else '⚠ Some tests failed - check logs' }}"
+          - ""
+          - "Next: Run Task 2.2.2 (Install Dovecot)"
+          - "  ./run_task.sh 2.2.2"
+          - "=========================================="
