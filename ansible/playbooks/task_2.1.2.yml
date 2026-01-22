@@ -6,8 +6,8 @@
 
 - name: Task 2.1.2 - Create Mail Server Database Schema and Users
   hosts: all
-  become: yes
-  gather_facts: yes
+  become: true
+  gather_facts: true
   
   vars_files:
     - ../group_vars/all.yml

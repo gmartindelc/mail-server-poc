@@ -1,7 +1,7 @@
 ---
 - name: Check error
   hosts: all
-  become: yes
+  become: true
   tasks:
     - name: Test config
       ansible.builtin.command:

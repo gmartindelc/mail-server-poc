@@ -5,8 +5,8 @@
 
 - name: Task 2.1.4 - PostgreSQL Database Verification
   hosts: all
-  become: yes
-  gather_facts: yes
+  become: true
+  gather_facts: true
   
   vars_files:
     - ../group_vars/all.yml

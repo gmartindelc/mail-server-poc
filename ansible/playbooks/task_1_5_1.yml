@@ -14,8 +14,8 @@
 
 - name: Task 1.5.1 - Configure UFW Firewall
   hosts: mail_servers
-  become: yes
-  gather_facts: yes
+  become: true
+  gather_facts: true
   
   tasks:
     - name: Include UFW configuration playbook

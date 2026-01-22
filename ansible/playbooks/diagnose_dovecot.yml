@@ -1,7 +1,7 @@
 ---
 - name: Diagnose Dovecot Configuration
   hosts: all
-  become: yes
+  become: true
   tasks:
     - name: Check what auth-sql.conf.ext looks like by default
       ansible.builtin.command:
@@ -29,4 +29,3 @@
     - name: Display current 10-auth.conf
       ansible.builtin.debug:
         msg: "{{ current_auth.stdout_lines }}"
-        
