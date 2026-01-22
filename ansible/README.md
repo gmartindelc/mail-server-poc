@@ -1,3 +1,6 @@
+> **Note:** Older, obsolete documentation has been moved to the `ansible/archive` and `docs/archive` directories for historical reference. This README is the current single source of truth.
+
+# Improved Mail Server Playbooks for Debian 13
 # Mail Server PoC - Complete Implementation Guide
 
 **Comprehensive documentation for all tasks from 1.2 through 2.2**
