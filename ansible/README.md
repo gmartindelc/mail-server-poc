@@ -1,3 +1,5 @@
+> **Note:** Older, obsolete documentation has been moved to the `ansible/archive` and `docs/archive` directories for historical reference. This README is the current single source of truth.
+
 # Improved Mail Server Playbooks for Debian 13
 
 Production-ready Ansible playbooks for deploying a complete mail server stack (Postfix + Dovecot + OpenDKIM) on Debian 13 with PostgreSQL backend.
