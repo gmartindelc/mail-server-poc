@@ -1,0 +1,111 @@
+---
+# Alternative: install_letsencrypt_dns.yml
+# Uses DNS challenge instead of HTTP challenge
+# This is useful when port 80 is blocked or unavailable
+
+- name: Install certbot and dependencies
+  ansible.builtin.apt:
+    name:
+      - certbot
+      - python3-certbot
+    state: present
+    update_cache: yes
+
+- name: Check if certificates already exist
+  ansible.builtin.stat:
+    path: "/etc/letsencrypt/live/{{ postfix_myhostname }}/fullchain.pem"
+  register: existing_cert
+
+- name: Display manual DNS challenge instructions
+  ansible.builtin.debug:
+    msg:
+      - "=========================================="
+      - "MANUAL DNS CHALLENGE MODE"
+      - "=========================================="
+      - ""
+      - "Since HTTP challenge failed, we'll use DNS challenge."
+      - "This requires manual TXT record creation."
+      - ""
+      - "You'll need to:"
+      - "1. Run certbot with --manual --preferred-challenges dns"
+      - "2. Create TXT records as instructed by certbot"
+      - "3. Press ENTER in certbot after records are added"
+      - ""
+      - "Commands to run on server:"
+      - "  sudo certbot certonly --manual --preferred-challenges dns \\"
+      - "    --email postmaster@{{ postfix_mydomain }} \\"
+      - "    -d {{ postfix_myhostname }} \\"
+      - "    -d {{ mail_server_alias | default('mail.' + postfix_mydomain) }}"
+      - ""
+      - "After certificates are generated, run this playbook again"
+      - "to configure Postfix and Dovecot."
+  when: not existing_cert.stat.exists
+
+- name: Wait for manual certificate generation
+  ansible.builtin.pause:
+    prompt: |
+      
+      Please SSH to the server and run the certbot command shown above.
+      
+      After certificates are generated, press ENTER to continue...
+  when: not existing_cert.stat.exists
+
+- name: Re-check if certificates exist after manual generation
+  ansible.builtin.stat:
+    path: "/etc/letsencrypt/live/{{ postfix_myhostname }}/fullchain.pem"
+  register: cert_after_manual
+
+- name: Fail if certificates still don't exist
+  ansible.builtin.fail:
+    msg: "Certificates not found. Please run certbot manually and try again."
+  when: not cert_after_manual.stat.exists
+
+# Continue with configuration if certificates exist
+- name: Update Postfix to use Let's Encrypt certificates
+  ansible.builtin.lineinfile:
+    path: /etc/postfix/main.cf
+    regexp: "{{ item.regexp }}"
+    line: "{{ item.line }}"
+    state: present
+  loop:
+    - regexp: '^smtpd_tls_cert_file\s*='
+      line: "smtpd_tls_cert_file = /etc/letsencrypt/live/{{ postfix_myhostname }}/fullchain.pem"
+    - regexp: '^smtpd_tls_key_file\s*='
+      line: "smtpd_tls_key_file = /etc/letsencrypt/live/{{ postfix_myhostname }}/privkey.pem"
+  notify: reload postfix
+
+- name: Update Dovecot to use Let's Encrypt certificates
+  ansible.builtin.lineinfile:
+    path: /etc/dovecot/conf.d/10-ssl.conf
+    regexp: "{{ item.regexp }}"
+    line: "{{ item.line }}"
+    state: present
+  loop:
+    - regexp: '^ssl_cert\s*='
+      line: "ssl_cert = </etc/letsencrypt/live/{{ postfix_myhostname }}/fullchain.pem"
+    - regexp: '^ssl_key\s*='
+      line: "ssl_key = </etc/letsencrypt/live/{{ postfix_myhostname }}/privkey.pem"
+  notify: reload dovecot
+
+- name: Reload services
+  ansible.builtin.systemd:
+    name: "{{ item }}"
+    state: reloaded
+  loop:
+    - postfix
+    - dovecot
+
+- name: Display completion message
+  ansible.builtin.debug:
+    msg:
+      - "=========================================="
+      - "SSL CERTIFICATES CONFIGURED"
+      - "=========================================="
+      - "Certificates from: /etc/letsencrypt/live/{{ postfix_myhostname }}/"
+      - "Services updated: Postfix, Dovecot"
+      - ""
+      - "IMPORTANT: Set up auto-renewal manually:"
+      - "  sudo certbot renew --manual"
+      - ""
+      - "Note: Manual DNS challenges require manual renewal."
+      - "Consider fixing port 80 access for automatic renewal."

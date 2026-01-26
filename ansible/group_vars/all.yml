@@ -1,28 +1,25 @@
 ---
 # Group Variables for Mail Server
 # Location: ansible/group_vars/all.yml
-# CORRECTED: Use phalkons.com and VPN IP for PostgreSQL
 
 # Server Network Configuration
-mail_server_public_ip: "45.32.207.84"
+mail_server_public_ip: "144.202.72.168"  # CORRECTED: Actual server IP
 mail_server_vpn_ip: "10.100.0.25"
 mail_server_vpn_network: "10.100.0.0/24"
 
 # Server Identity
 mail_server_hostname: "cucho1.phalkons.com"
 mail_server_domain: "phalkons.com"
+mail_server_alias: "mail.phalkons.com"  # NEW: Mail server alias for SSL cert
 
-# Test/Demo Domain - CORRECTED to use phalkons.com
-mail_test_domain: "phalkons.com"
-
-# Database Configuration - CORRECTED to use VPN IP
-postgres_host: "10.100.0.25"
+# Database Configuration
+postgres_host: "{{ mail_server_vpn_ip }}"  # CHANGED: Use VPN IP instead of localhost
 postgres_port: 5432
 postgres_db: "mailserver"
 postgres_container_name: "mailserver-postgres"
 postgres_admin_user: "postgres"
 
-# Database Service Users - CONSISTENT naming
+# Database Service Users
 postgres_mail_user: "mailuser"
 postgres_postfix_user: "postfix_user"
 postgres_dovecot_user: "dovecot_user"
@@ -58,6 +55,8 @@ postgres_connection_strings_dir: "/opt/mail_server/postgres/connection_strings"
 # SSL/TLS Configuration
 ssl_cert_path: "/etc/ssl/certs/ssl-cert-snakeoil.pem"
 ssl_key_path: "/etc/ssl/private/ssl-cert-snakeoil.key"
+letsencrypt_enabled: false  # NEW: Will be set to true after Task 2.2.4
+letsencrypt_email: "postmaster@{{ mail_server_domain }}"  # NEW: Email for Let's Encrypt
 
 # OpenDKIM Configuration
 opendkim_socket: "inet:8891@localhost"
@@ -73,10 +72,11 @@ dovecot_protocols: "imap lmtp"
 dovecot_mail_location: "maildir:{{ mail_vmail_dir }}/%d/%n"
 
 # Test User Configuration
+mail_test_domain: "{{ mail_server_domain }}"  # Use phalkons.com for testing
 mail_test_username: "testuser1"
 mail_test_password: "TestPass123!"
-mail_test_email: "{{ mail_test_username }}@{{ mail_test_domain }}"
-mail_test_alias: "test@{{ mail_test_domain }}"
+mail_test_email: "{{ mail_test_username }}@{{ mail_server_domain }}"  # CHANGED: Use actual domain
+mail_test_alias: "admin@{{ mail_server_domain }}"  # CHANGED: Use actual domain
 
 # Database Connection Templates
 postgres_admin_connection: "postgresql://{{ postgres_admin_user }}:%s@{{ postgres_host }}:{{ postgres_port }}/{{ postgres_db }}"

@@ -1,0 +1,116 @@
+---
+# Diagnostic playbook for Let's Encrypt certificate generation issues
+# Run this to troubleshoot certificate generation failures
+
+- name: Let's Encrypt Diagnostics
+  hosts: mail_server
+  become: yes
+  gather_facts: yes
+
+  tasks:
+    - name: Check if port 80 is listening
+      ansible.builtin.shell:
+        cmd: "ss -tlnp | grep ':80 '"
+      register: port_80_check
+      changed_when: false
+      failed_when: false
+
+    - name: Display port 80 status
+      ansible.builtin.debug:
+        msg:
+          - "Port 80 status:"
+          - "{{ port_80_check.stdout_lines if port_80_check.stdout_lines else ['Port 80 is NOT listening'] }}"
+
+    - name: Check firewall status (UFW)
+      ansible.builtin.command:
+        cmd: ufw status
+      register: ufw_status
+      changed_when: false
+      failed_when: false
+
+    - name: Display firewall status
+      ansible.builtin.debug:
+        msg:
+          - "Firewall status:"
+          - "{{ ufw_status.stdout_lines }}"
+
+    - name: Check if port 80 is accessible from internet
+      ansible.builtin.uri:
+        url: "http://{{ ansible_default_ipv4.address }}/"
+        timeout: 5
+      delegate_to: localhost
+      register: port_80_test
+      failed_when: false
+      changed_when: false
+
+    - name: Display internet accessibility test
+      ansible.builtin.debug:
+        msg:
+          - "Port 80 internet accessibility:"
+          - "Status: {{ 'ACCESSIBLE' if port_80_test.status is defined else 'NOT ACCESSIBLE' }}"
+
+    - name: Check existing certbot logs
+      ansible.builtin.command:
+        cmd: "tail -100 /var/log/letsencrypt/letsencrypt.log"
+      register: certbot_logs
+      changed_when: false
+      failed_when: false
+
+    - name: Display certbot logs
+      ansible.builtin.debug:
+        msg:
+          - "Recent certbot logs:"
+          - "{{ certbot_logs.stdout_lines }}"
+
+    - name: Check DNS resolution from server
+      ansible.builtin.command:
+        cmd: "dig +short {{ item }}"
+      loop:
+        - "{{ postfix_myhostname }}"
+        - "{{ mail_server_alias | default('mail.' + postfix_mydomain) }}"
+      register: dns_from_server
+      changed_when: false
+
+    - name: Display DNS resolution from server
+      ansible.builtin.debug:
+        msg:
+          - "DNS resolution from server:"
+          - "  {{ postfix_myhostname }} → {{ dns_from_server.results[0].stdout }}"
+          - "  {{ mail_server_alias | default('mail.' + postfix_mydomain) }} → {{ dns_from_server.results[1].stdout }}"
+
+    - name: Check if any web server is running
+      ansible.builtin.shell:
+        cmd: "ps aux | grep -E '(nginx|apache|httpd)' | grep -v grep"
+      register: web_server_check
+      changed_when: false
+      failed_when: false
+
+    - name: Display web server status
+      ansible.builtin.debug:
+        msg:
+          - "Web servers running:"
+          - "{{ web_server_check.stdout_lines if web_server_check.stdout_lines else ['No web server detected'] }}"
+
+    - name: Summary and recommendations
+      ansible.builtin.debug:
+        msg:
+          - "===================="
+          - "DIAGNOSTIC SUMMARY"
+          - "===================="
+          - ""
+          - "Common issues and solutions:"
+          - ""
+          - "1. Port 80 blocked by firewall:"
+          - "   Solution: sudo ufw allow 80/tcp"
+          - ""
+          - "2. Port 80 blocked by cloud provider firewall:"
+          - "   Solution: Check Vultr firewall settings, allow HTTP (80)"
+          - ""
+          - "3. Web server using port 80:"
+          - "   Solution: Stop web server temporarily during cert generation"
+          - ""
+          - "4. DNS propagation not complete:"
+          - "   Solution: Wait 5-15 minutes and try again"
+          - ""
+          - "To view full certbot logs:"
+          - "  sudo cat /var/log/letsencrypt/letsencrypt.log"

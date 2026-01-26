@@ -1,27 +1,88 @@
 ---
-# Task 2.2.4: End-to-End Mail Flow Test
-# 
-# Purpose: Verify complete mail system functionality
-# - Test all service statuses
-# - Verify PostgreSQL integration
-# - Test mail delivery (SMTP → Dovecot)
-# - Check IMAP access
-# - Verify DKIM signing
-# - Generate test report
-#
-# Usage: ./run_task.sh 2.2.4
-# Or: ansible-playbook playbooks/task_2_2_4.yml
+# Task 2.2.5: End-to-End Mail System Testing
+# Comprehensive testing and validation of mail server functionality
 
-- name: Task 2.2.4 - End-to-End Mail Flow Test
-  hosts: mail_servers
+- name: "Task 2.2.5: End-to-End Mail System Testing"
+  hosts: mail_server
   become: yes
   gather_facts: yes
-  
+
+  vars:
+    task_number: "2.2.5"
+    task_name: "End-to-End Mail System Testing"
+    task_description: "Comprehensive testing and validation of mail server functionality"
+
+  pre_tasks:
+    - name: Display task information
+      ansible.builtin.debug:
+        msg:
+          - "=========================================="
+          - "Task {{ task_number }}: {{ task_name }}"
+          - "=========================================="
+          - "Description: {{ task_description }}"
+          - "Target Host: {{ inventory_hostname }}"
+          - ""
+          - "This task will test:"
+          - "  1. Service Status (Postfix, Dovecot, OpenDKIM, PostgreSQL)"
+          - "  2. Database Connectivity and Queries"
+          - "  3. Authentication (testuser1@{{ mail_server_domain }})"
+          - "  4. Port Availability (25, 587, 143, 993)"
+          - "  5. Mail Delivery (SMTP → LMTP → Maildir)"
+          - "  6. DKIM Signing Verification"
+          - "  7. SSL/TLS Certificate Validation"
+          - "  8. Overall System Health Score"
+          - ""
+          - "Test domain: {{ mail_server_domain }}"
+          - "Test user: testuser1@{{ mail_server_domain }}"
+          - ""
+
   tasks:
     - name: Include mail system testing playbook
-      ansible.builtin.include_tasks:
-        file: reusable/test_mail_system.yml
-      tags:
-        - test
-        - mail
-        - verification
+      ansible.builtin.include_tasks: test_mail_system.yml
+
+  post_tasks:
+    - name: Check if test report was generated
+      ansible.builtin.stat:
+        path: /root/mail_system_test_report.txt
+      register: test_report
+
+    - name: Display test completion summary
+      ansible.builtin.debug:
+        msg:
+          - "=========================================="
+          - "Task {{ task_number }} Completion Summary"
+          - "=========================================="
+          - ""
+          - "Test Report: {{ '/root/mail_system_test_report.txt' if test_report.stat.exists else 'NOT GENERATED' }}"
+          - ""
+          - "{{ '✅ Tests Complete!' if test_report.stat.exists else '⚠️ Report not found - check logs above' }}"
+          - ""
+          - "To view full report:"
+          - "  ssh phalkonadmin@{{ mail_server_vpn_ip }} 'sudo cat /root/mail_system_test_report.txt'"
+          - ""
+          - "Manual testing commands:"
+          - "  # Send test email"
+          - "  echo 'Test message' | mail -s 'Test Subject' testuser1@{{ mail_server_domain }}"
+          - ""
+          - "  # Check if delivered"
+          - "  sudo ls -la {{ mail_vmail_dir }}/{{ mail_server_domain }}/testuser1/new/"
+          - ""
+          - "  # Test IMAP login"
+          - "  sudo doveadm auth test testuser1@{{ mail_server_domain }} TestPass123!"
+          - ""
+          - "  # Check DKIM signing"
+          - "  sudo opendkim-testkey -d {{ mail_server_domain }} -s {{ dkim_selector }} -vvv"
+          - ""
+          - "  # Test SSL certificates"
+          - "  openssl s_client -connect {{ postfix_myhostname }}:587 -starttls smtp"
+          - "  openssl s_client -connect {{ postfix_myhostname }}:993"
+          - ""
+          - "Next Steps:"
+          - "  1. Review test report for any failures"
+          - "  2. Add DNS records if not done (DKIM, SPF, DMARC):"
+          - "     sudo cat /root/dns_records.txt"
+          - "  3. Test with external email (Gmail, Outlook)"
+          - "  4. Configure email client (Thunderbird, Outlook, etc.)"
+          - ""
+          - "Mail server deployment is complete!"
+          - "=========================================="

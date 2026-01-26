@@ -1,0 +1,125 @@
+---
+# Task 2.2.4: Generate Let's Encrypt SSL Certificates
+# This playbook installs certbot and generates trusted SSL certificates
+# for the mail server, replacing self-signed certificates
+
+- name: "Task 2.2.4: Generate Let's Encrypt SSL Certificates"
+  hosts: mail_server
+  become: yes
+  gather_facts: yes
+
+  vars:
+    task_number: "2.2.4"
+    task_name: "Generate Let's Encrypt SSL Certificates"
+    task_description: "Install certbot and generate trusted SSL certificates for Postfix and Dovecot"
+
+  pre_tasks:
+    - name: Display task information
+      ansible.builtin.debug:
+        msg:
+          - "=========================================="
+          - "Task {{ task_number }}: {{ task_name }}"
+          - "=========================================="
+          - "Description: {{ task_description }}"
+          - "Target Host: {{ inventory_hostname }}"
+          - "Connection: {{ ansible_connection }}"
+          - ""
+          - "This task will:"
+          - "  1. Install certbot (Let's Encrypt client)"
+          - "  2. Generate SSL certificates for mail server domains"
+          - "  3. Update Postfix to use Let's Encrypt certificates"
+          - "  4. Update Dovecot to use Let's Encrypt certificates"
+          - "  5. Configure automatic certificate renewal"
+          - ""
+          - "Prerequisites:"
+          - "  - DNS A records for {{ postfix_myhostname }} → {{ mail_server_public_ip }}"
+          - "  - DNS A records for {{ mail_server_alias | default('mail.' + postfix_mydomain) }} → {{ mail_server_public_ip }}"
+          - "  - Port 80 accessible for ACME challenge"
+          - ""
+
+    - name: Verify DNS records before proceeding
+      ansible.builtin.command:
+        cmd: "dig +short {{ item }}"
+      loop:
+        - "{{ postfix_myhostname }}"
+        - "{{ mail_server_alias | default('mail.' + postfix_mydomain) }}"
+      register: dns_check
+      changed_when: false
+
+    - name: Display DNS verification results
+      ansible.builtin.debug:
+        msg:
+          - "DNS Record Check:"
+          - "  {{ postfix_myhostname }} → {{ dns_check.results[0].stdout }}"
+          - "  {{ mail_server_alias | default('mail.' + postfix_mydomain) }} → {{ dns_check.results[1].stdout }}"
+          - ""
+          - "Expected IP: {{ mail_server_public_ip }}"
+
+    - name: Pause for DNS verification confirmation
+      ansible.builtin.pause:
+        prompt: |
+          
+          Please verify the DNS records above are correct.
+          Press ENTER to continue or Ctrl+C to abort...
+      when: ansible_connection != 'local'
+
+  tasks:
+    - name: Include Let's Encrypt certificate generation playbook
+      ansible.builtin.include_tasks: install_letsencrypt.yml
+
+  handlers:
+    - name: reload postfix
+      ansible.builtin.systemd:
+        name: postfix
+        state: reloaded
+
+    - name: reload dovecot
+      ansible.builtin.systemd:
+        name: dovecot
+        state: reloaded
+
+  post_tasks:
+    - name: Verify SSL certificates were generated
+      ansible.builtin.stat:
+        path: "/etc/letsencrypt/live/{{ postfix_myhostname }}/fullchain.pem"
+      register: cert_check
+
+    - name: Display task completion summary
+      ansible.builtin.debug:
+        msg:
+          - "=========================================="
+          - "Task {{ task_number }} Completion Summary"
+          - "=========================================="
+          - ""
+          - "Certificate Status:"
+          - "  Primary Domain: {{ postfix_myhostname }}"
+          - "  Certificate File: {{ cert_check.stat.path if cert_check.stat.exists else 'NOT FOUND' }}"
+          - "  Certificate Exists: {{ 'YES ✓' if cert_check.stat.exists else 'NO ✗' }}"
+          - ""
+          - "Services Updated:"
+          - "  Postfix: {{ 'Updated with new certificates' if cert_check.stat.exists else 'Check manually' }}"
+          - "  Dovecot: {{ 'Updated with new certificates' if cert_check.stat.exists else 'Check manually' }}"
+          - ""
+          - "Auto-Renewal:"
+          - "  Status: Configured via certbot systemd timer"
+          - "  Schedule: Twice daily (automatic)"
+          - "  Certificate Validity: 90 days"
+          - ""
+          - "Next Steps:"
+          - "  1. Verify certificates:"
+          - "     openssl s_client -connect {{ postfix_myhostname }}:587 -starttls smtp"
+          - "     openssl s_client -connect {{ postfix_myhostname }}:993"
+          - "  2. Check auto-renewal timer:"
+          - "     systemctl status certbot.timer"
+          - "  3. Test certificate renewal:"
+          - "     certbot renew --dry-run"
+          - "  4. Proceed to Task 2.2.5 (End-to-End Testing):"
+          - "     ./run_task.sh 2.2.5"
+          - ""
+          - "Task {{ task_number }}: {{ 'COMPLETE ✓' if cert_check.stat.exists else 'NEEDS VERIFICATION' }}"
+          - "=========================================="
+
+    - name: Fail if certificates were not generated
+      ansible.builtin.fail:
+        msg: "SSL certificates were not generated successfully. Please check the logs above."
+      when: not cert_check.stat.exists

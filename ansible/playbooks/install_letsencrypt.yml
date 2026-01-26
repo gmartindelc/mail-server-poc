@@ -1,0 +1,446 @@
+---
+# Playbook: install_letsencrypt.yml
+# Purpose: Install certbot and generate Let's Encrypt SSL certificates for mail server
+# Dependencies: DNS records must be configured and pointing to server
+# Used by: task_2.2.4.yml
+
+- name: Install certbot and dependencies
+  ansible.builtin.apt:
+    name:
+      - certbot
+      - python3-certbot
+    state: present
+    update_cache: yes
+  register: certbot_install
+
+- name: Display certbot installation status
+  ansible.builtin.debug:
+    msg: "Certbot installed: {{ certbot_install.changed }}"
+
+- name: Test Let's Encrypt API connectivity
+  ansible.builtin.uri:
+    url: https://acme-v02.api.letsencrypt.org/directory
+    method: GET
+    timeout: 10
+  register: letsencrypt_api_test
+  failed_when: false
+  changed_when: false
+
+- name: Display API connectivity status
+  ansible.builtin.debug:
+    msg:
+      - "Let's Encrypt API test: {{ 'SUCCESS' if letsencrypt_api_test.status == 200 else 'FAILED' }}"
+      - "Status code: {{ letsencrypt_api_test.status | default('N/A') }}"
+
+- name: Warn if API is unreachable
+  ansible.builtin.debug:
+    msg:
+      - "⚠️  WARNING: Cannot reach Let's Encrypt API"
+      - "This may indicate network connectivity issues"
+      - "Certificate generation may fail"
+  when: letsencrypt_api_test.status != 200
+
+- name: Check if certificates already exist
+  ansible.builtin.stat:
+    path: "/etc/letsencrypt/live/{{ postfix_myhostname }}/fullchain.pem"
+  register: existing_cert
+
+- name: Display existing certificate status
+  ansible.builtin.debug:
+    msg: "Existing certificate found: {{ existing_cert.stat.exists }}"
+
+- name: Check if UFW is active
+  ansible.builtin.command:
+    cmd: ufw status
+  register: ufw_status
+  changed_when: false
+  failed_when: false
+
+- name: Allow port 80 for ACME challenge (if UFW is active)
+  ansible.builtin.ufw:
+    rule: allow
+    port: '80'
+    proto: tcp
+    comment: 'HTTP for Let Encrypt ACME challenge'
+  when: 
+    - "'Status: active' in ufw_status.stdout"
+  register: port_80_opened
+
+- name: Display port 80 firewall status
+  ansible.builtin.debug:
+    msg: 
+      - "UFW Status: {{ 'Active' if 'Status: active' in ufw_status.stdout else 'Inactive' }}"
+      - "Port 80 Rule: {{ 'Added/Already exists' if 'Status: active' in ufw_status.stdout else 'UFW not active' }}"
+
+- name: Wait for UFW changes to take effect
+  ansible.builtin.pause:
+    seconds: 2
+  when: port_80_opened.changed | default(false)
+
+- name: Stop services temporarily for certificate generation (standalone mode)
+  ansible.builtin.systemd:
+    name: "{{ item }}"
+    state: stopped
+  loop:
+    - postfix
+    - dovecot
+  when: not existing_cert.stat.exists
+  register: services_stopped
+
+- name: Generate Let's Encrypt certificates (standalone mode)
+  ansible.builtin.command:
+    cmd: >
+      certbot certonly
+      --standalone
+      --non-interactive
+      --agree-tos
+      --email {{ letsencrypt_email | default('postmaster@' + postfix_mydomain) }}
+      --domains {{ postfix_myhostname }},{{ mail_server_alias | default('mail.' + postfix_mydomain) }}
+      --preferred-challenges http
+      --http-01-port 80
+      --verbose
+  register: certbot_generate
+  failed_when: false
+  when: not existing_cert.stat.exists
+  retries: 2
+  delay: 10
+  until: certbot_generate.rc == 0
+
+- name: Check certbot result
+  ansible.builtin.debug:
+    msg:
+      - "Certbot exit code: {{ certbot_generate.rc }}"
+      - "Certbot stdout: {{ certbot_generate.stdout_lines | default([]) }}"
+      - "Certbot stderr: {{ certbot_generate.stderr_lines | default([]) }}"
+  when: not existing_cert.stat.exists and certbot_generate is defined
+
+- name: Read certbot logs if generation failed
+  ansible.builtin.command:
+    cmd: "tail -100 /var/log/letsencrypt/letsencrypt.log"
+  register: certbot_error_logs
+  changed_when: false
+  when: 
+    - not existing_cert.stat.exists
+    - certbot_generate is defined
+    - certbot_generate.rc != 0
+
+- name: Display certbot error logs
+  ansible.builtin.debug:
+    msg:
+      - "=== Certbot Error Logs ==="
+      - "{{ certbot_error_logs.stdout_lines | default(['No error logs available']) }}"
+      - ""
+      - "Common solutions:"
+      - "1. Check Vultr firewall allows port 80"
+      - "2. Verify DNS records are correct"
+      - "3. Ensure no other service is using port 80"
+  when:
+    - not existing_cert.stat.exists
+    - certbot_error_logs is defined
+    - certbot_error_logs.stdout_lines is defined
+
+- name: Fail if certificate generation failed
+  ansible.builtin.fail:
+    msg: |
+      ❌ Certificate generation failed!
+      
+      Exit code: {{ certbot_generate.rc }}
+      
+      📋 Check the logs above for details.
+      
+      🔍 Common issues:
+      
+      1. ⚠️  VULTR FIREWALL (Most common issue)
+         The Vultr cloud firewall may be blocking port 80.
+         
+         Fix:
+         - Log into Vultr dashboard
+         - Go to your server: cucho1.phalkons.com
+         - Click "Settings" → "Firewall"
+         - Ensure port 80 (HTTP) is allowed from 0.0.0.0/0
+         - Add rule: Protocol=TCP, Port=80, Source=Anywhere
+      
+      2. ⚠️  Rate Limit (if you see "too many failed authorizations")
+         Let's Encrypt limits failed attempts to 5 per hour.
+         
+         Fix:
+         - Wait 1 hour before retrying
+         - Or use DNS challenge instead (see below)
+      
+      3. ⚠️  DNS issues (rare, your DNS looks correct)
+         Fix:
+         - Verify: dig {{ postfix_myhostname }}
+         - Should return: 144.202.72.168
+      
+      🔧 Alternative: Use DNS Challenge
+      
+      If HTTP challenge continues to fail, use DNS challenge:
+      
+      On the server:
+      sudo certbot certonly --manual --preferred-challenges dns \
+        --email postmaster@{{ postfix_mydomain }} \
+        -d {{ postfix_myhostname }} \
+        -d {{ mail_server_alias | default('mail.' + postfix_mydomain) }}
+      
+      Then add the TXT records as instructed by certbot.
+      
+      After certificates are generated, re-run this playbook to configure services.
+      
+      📝 Debug commands:
+      - View full logs: sudo cat /var/log/letsencrypt/letsencrypt.log
+      - Test port 80: curl -I http://{{ postfix_myhostname }}
+      - Check UFW: sudo ufw status
+      - Check if port 80 is open: sudo ss -tlnp | grep :80
+  when:
+    - not existing_cert.stat.exists
+    - certbot_generate is defined
+    - certbot_generate.rc != 0
+
+- name: Start services after certificate generation
+  ansible.builtin.systemd:
+    name: "{{ item }}"
+    state: started
+  loop:
+    - postfix
+    - dovecot
+  when: services_stopped is defined and services_stopped.changed
+
+- name: Create certificate renewal hook directory
+  ansible.builtin.file:
+    path: /etc/letsencrypt/renewal-hooks/deploy
+    state: directory
+    mode: '0755'
+    owner: root
+    group: root
+
+- name: Create post-renewal hook to reload services
+  ansible.builtin.copy:
+    dest: /etc/letsencrypt/renewal-hooks/deploy/reload-mail-services.sh
+    content: |
+      #!/bin/bash
+      # Post-renewal hook to reload Postfix and Dovecot
+      # This script runs after successful certificate renewal
+      
+      systemctl reload postfix
+      systemctl reload dovecot
+      
+      logger "Let's Encrypt certificates renewed and mail services reloaded"
+    mode: '0755'
+    owner: root
+    group: root
+
+- name: Backup current Postfix SSL configuration
+  ansible.builtin.copy:
+    src: /etc/postfix/main.cf
+    dest: /etc/postfix/main.cf.backup-before-letsencrypt
+    remote_src: yes
+    mode: '0644'
+  when: not existing_cert.stat.exists
+
+- name: Update Postfix to use Let's Encrypt certificates
+  ansible.builtin.lineinfile:
+    path: /etc/postfix/main.cf
+    regexp: "{{ item.regexp }}"
+    line: "{{ item.line }}"
+    state: present
+  loop:
+    - regexp: '^smtpd_tls_cert_file\s*='
+      line: "smtpd_tls_cert_file = /etc/letsencrypt/live/{{ postfix_myhostname }}/fullchain.pem"
+    - regexp: '^smtpd_tls_key_file\s*='
+      line: "smtpd_tls_key_file = /etc/letsencrypt/live/{{ postfix_myhostname }}/privkey.pem"
+    - regexp: '^smtp_tls_cert_file\s*='
+      line: "smtp_tls_cert_file = /etc/letsencrypt/live/{{ postfix_myhostname }}/fullchain.pem"
+    - regexp: '^smtp_tls_key_file\s*='
+      line: "smtp_tls_key_file = /etc/letsencrypt/live/{{ postfix_myhostname }}/privkey.pem"
+  notify: reload postfix
+
+- name: Backup current Dovecot SSL configuration
+  ansible.builtin.copy:
+    src: /etc/dovecot/conf.d/10-ssl.conf
+    dest: /etc/dovecot/conf.d/10-ssl.conf.backup-before-letsencrypt
+    remote_src: yes
+    mode: '0644'
+  when: not existing_cert.stat.exists
+
+- name: Remove old SSL certificate lines from Dovecot config
+  ansible.builtin.lineinfile:
+    path: /etc/dovecot/conf.d/10-ssl.conf
+    regexp: "{{ item }}"
+    state: absent
+  loop:
+    - '^ssl_cert\s*='
+    - '^ssl_key\s*='
+    - '^ssl_server_cert_file\s*='
+    - '^ssl_server_key_file\s*='
+
+- name: Update Dovecot to use Let's Encrypt certificates
+  ansible.builtin.blockinfile:
+    path: /etc/dovecot/conf.d/10-ssl.conf
+    marker: "# {mark} ANSIBLE MANAGED - Let's Encrypt SSL"
+    insertafter: "^ssl = "
+    block: |
+      ssl_server_cert_file = </etc/letsencrypt/live/{{ postfix_myhostname }}/fullchain.pem
+      ssl_server_key_file = </etc/letsencrypt/live/{{ postfix_myhostname }}/privkey.pem
+  notify: reload dovecot
+
+- name: Enable certbot automatic renewal timer
+  ansible.builtin.systemd:
+    name: certbot.timer
+    enabled: yes
+    state: started
+  register: certbot_timer
+
+- name: Check certbot timer status
+  ansible.builtin.command:
+    cmd: systemctl status certbot.timer
+  register: timer_status
+  changed_when: false
+  failed_when: false
+
+- name: Display certbot timer status
+  ansible.builtin.debug:
+    msg:
+      - "Certbot timer enabled: {{ certbot_timer.enabled }}"
+      - "Timer status: {{ 'active' if 'active' in timer_status.stdout else 'check manually' }}"
+
+- name: Test certificate renewal (dry run)
+  ansible.builtin.command:
+    cmd: certbot renew --dry-run
+  register: renewal_test
+  changed_when: false
+  failed_when: false
+  async: 120  # 2 minute timeout
+  poll: 5     # Check every 5 seconds
+  when: test_certificate_renewal | default(false)
+
+- name: Display renewal test results
+  ansible.builtin.debug:
+    msg:
+      - "Certificate renewal test:"
+      - "{{ renewal_test.stdout_lines | default(['Test not run']) }}"
+  when: renewal_test is defined
+
+- name: Create certificate information file
+  ansible.builtin.copy:
+    dest: /root/letsencrypt_certificate_info.txt
+    content: |
+      Let's Encrypt SSL Certificates - Installation Summary
+      =====================================================
+      
+      Installation Date: {{ ansible_date_time.iso8601 }}
+      Primary Domain: {{ postfix_myhostname }}
+      Alternative Domain: {{ mail_server_alias | default('mail.' + postfix_mydomain) }}
+      
+      Certificate Locations:
+      ---------------------
+      Certificate: /etc/letsencrypt/live/{{ postfix_myhostname }}/fullchain.pem
+      Private Key: /etc/letsencrypt/live/{{ postfix_myhostname }}/privkey.pem
+      Chain: /etc/letsencrypt/live/{{ postfix_myhostname }}/chain.pem
+      Full Chain: /etc/letsencrypt/live/{{ postfix_myhostname }}/fullchain.pem
+      
+      Services Using Certificates:
+      ---------------------------
+      - Postfix (SMTP/Submission)
+        Config: /etc/postfix/main.cf
+        Backup: /etc/postfix/main.cf.backup-before-letsencrypt
+      
+      - Dovecot (IMAP/IMAPS)
+        Config: /etc/dovecot/conf.d/10-ssl.conf
+        Backup: /etc/dovecot/conf.d/10-ssl.conf.backup-before-letsencrypt
+      
+      Auto-Renewal:
+      ------------
+      Status: Enabled (certbot.timer)
+      Schedule: Twice daily (automatic check)
+      Hook Script: /etc/letsencrypt/renewal-hooks/deploy/reload-mail-services.sh
+      
+      Certificate Validity:
+      --------------------
+      Valid for: 90 days from issue date
+      Auto-renewal: Attempts 30 days before expiry
+      
+      Useful Commands:
+      ---------------
+      # Check certificate status
+      certbot certificates
+      
+      # Test certificate renewal
+      certbot renew --dry-run
+      
+      # Force certificate renewal (if needed)
+      certbot renew --force-renewal
+      
+      # Check auto-renewal timer
+      systemctl status certbot.timer
+      
+      # View certificate details
+      openssl x509 -in /etc/letsencrypt/live/{{ postfix_myhostname }}/cert.pem -text -noout
+      
+      # Test SMTP TLS
+      openssl s_client -connect {{ postfix_myhostname }}:587 -starttls smtp
+      
+      # Test IMAPS TLS
+      openssl s_client -connect {{ postfix_myhostname }}:993
+      
+      Troubleshooting:
+      ---------------
+      # If renewal fails, check:
+      1. DNS records still point to this server
+      2. Port 80 is accessible (for HTTP challenge)
+      3. Firewall allows inbound HTTP traffic
+      4. Check logs: journalctl -u certbot -n 50
+      
+      # Manual renewal process:
+      systemctl stop postfix dovecot
+      certbot renew
+      systemctl start postfix dovecot
+      
+      =====================================================
+      Generated by Ansible - Task 2.2.4
+    mode: '0644'
+    owner: root
+    group: root
+
+- name: Update group_vars with new certificate paths
+  ansible.builtin.lineinfile:
+    path: "{{ playbook_dir }}/../group_vars/all.yml"
+    regexp: "{{ item.regexp }}"
+    line: "{{ item.line }}"
+    state: present
+  loop:
+    - regexp: '^ssl_cert_path:'
+      line: "ssl_cert_path: /etc/letsencrypt/live/{{ postfix_myhostname }}/fullchain.pem"
+    - regexp: '^ssl_key_path:'
+      line: "ssl_key_path: /etc/letsencrypt/live/{{ postfix_myhostname }}/privkey.pem"
+    - regexp: '^letsencrypt_enabled:'
+      line: "letsencrypt_enabled: true"
+  delegate_to: localhost
+  become: no
+
+- name: Verify certificate files exist and are readable
+  ansible.builtin.stat:
+    path: "{{ item }}"
+  loop:
+    - "/etc/letsencrypt/live/{{ postfix_myhostname }}/fullchain.pem"
+    - "/etc/letsencrypt/live/{{ postfix_myhostname }}/privkey.pem"
+    - "/etc/letsencrypt/live/{{ postfix_myhostname }}/chain.pem"
+  register: cert_files
+
+- name: Display certificate file verification
+  ansible.builtin.debug:
+    msg: "Certificate file {{ item.item }}: {{ 'EXISTS ✓' if item.stat.exists else 'MISSING ✗' }}"
+  loop: "{{ cert_files.results }}"
+  loop_control:
+    label: "{{ item.item }}"
+
+- name: Get certificate information
+  ansible.builtin.command:
+    cmd: "certbot certificates"
+  register: cert_info
+  changed_when: false
+
+- name: Display certificate information
+  ansible.builtin.debug:
+    msg:
+      - "Let's Encrypt Certificate Information:"
+      - "{{ cert_info.stdout_lines }}"

@@ -1,0 +1,168 @@
+---
+# Fix Dovecot SSL configuration - remove duplicates
+- hosts: mail_server
+  become: yes
+  gather_facts: no
+  tasks:
+    - name: Backup current Dovecot SSL config
+      ansible.builtin.copy:
+        src: /etc/dovecot/conf.d/10-ssl.conf
+        dest: /etc/dovecot/conf.d/10-ssl.conf.backup-{{ ansible_date_time.epoch }}
+        remote_src: yes
+
+    - name: Check current SSL config
+      ansible.builtin.command:
+        cmd: cat /etc/dovecot/conf.d/10-ssl.conf
+      register: current_config
+      changed_when: false
+
+    - name: Display current config (for reference)
+      ansible.builtin.debug:
+        msg: "{{ current_config.stdout_lines }}"
+
+    - name: Remove old SSL certificate lines from Dovecot config
+      ansible.builtin.lineinfile:
+        path: /etc/dovecot/conf.d/10-ssl.conf
+        regexp: "{{ item }}"
+        state: absent
+      loop:
+        - '^ssl_cert\s*='
+        - '^ssl_key\s*='
+        - '^ssl_server_cert_file\s*='
+        - '^ssl_server_key_file\s*='
+
+    - name: Add correct SSL certificate configuration
+      ansible.builtin.blockinfile:
+        path: /etc/dovecot/conf.d/10-ssl.conf
+        marker: "# {mark} ANSIBLE MANAGED SSL CERTIFICATE CONFIGURATION"
+        insertafter: "^ssl = "
+        block: |
+          # SSL certificate paths (Let's Encrypt) - Dovecot 2.4 format
+          ssl_server_cert_file = </etc/letsencrypt/live/cucho1.phalkons.com/fullchain.pem
+          ssl_server_key_file = </etc/letsencrypt/live/cucho1.phalkons.com/privkey.pem
+
+    - name: Test Dovecot configuration
+      ansible.builtin.command:
+        cmd: doveconf -n
+      register: config_test
+      changed_when: false
+      failed_when: config_test.rc != 0
+
+    - name: Display config test result
+      ansible.builtin.debug:
+        msg: "Configuration test: {{ 'PASSED ✓' if config_test.rc == 0 else 'FAILED ✗' }}"
+
+    - name: Check certificate file permissions
+      ansible.builtin.stat:
+        path: "{{ item }}"
+      loop:
+        - /etc/letsencrypt/live/cucho1.phalkons.com/fullchain.pem
+        - /etc/letsencrypt/live/cucho1.phalkons.com/privkey.pem
+        - /etc/letsencrypt/archive/cucho1.phalkons.com/fullchain1.pem
+        - /etc/letsencrypt/archive/cucho1.phalkons.com/privkey1.pem
+      register: cert_perms
+
+    - name: Display certificate permissions
+      ansible.builtin.debug:
+        msg: "{{ item.item }}: mode={{ item.stat.mode }} owner={{ item.stat.pw_name }}"
+      loop: "{{ cert_perms.results }}"
+
+    - name: Fix Let's Encrypt directory permissions (read access for dovecot)
+      ansible.builtin.file:
+        path: "{{ item }}"
+        mode: '0755'
+        state: directory
+      loop:
+        - /etc/letsencrypt
+        - /etc/letsencrypt/live
+        - /etc/letsencrypt/archive
+        - /etc/letsencrypt/live/cucho1.phalkons.com
+        - /etc/letsencrypt/archive/cucho1.phalkons.com
+
+    - name: Ensure Dovecot can read certificates
+      ansible.builtin.file:
+        path: /etc/letsencrypt/archive/cucho1.phalkons.com/fullchain1.pem
+        mode: '0644'
+
+    - name: Start Dovecot service
+      ansible.builtin.systemd:
+        name: dovecot
+        state: started
+        enabled: yes
+      register: dovecot_start
+      failed_when: false
+
+    - name: Start Dovecot service
+      ansible.builtin.systemd:
+        name: dovecot
+        state: started
+        enabled: yes
+      register: dovecot_start
+      failed_when: false
+
+    - name: Get Dovecot logs if start failed
+      ansible.builtin.command:
+        cmd: journalctl -u dovecot -n 30 --no-pager
+      register: dovecot_logs
+      changed_when: false
+      when: dovecot_start.status.ActiveState != 'active'
+
+    - name: Display Dovecot error logs
+      ansible.builtin.debug:
+        msg: "{{ dovecot_logs.stdout_lines }}"
+      when: dovecot_start.status.ActiveState != 'active'
+
+    - name: Fail if Dovecot didn't start
+      ansible.builtin.fail:
+        msg: "Dovecot failed to start - check logs above"
+      when: dovecot_start.status.ActiveState != 'active'
+
+    - name: Check Dovecot status
+      ansible.builtin.systemd:
+        name: dovecot
+      register: dovecot_status
+
+    - name: Display Dovecot status
+      ansible.builtin.debug:
+        msg:
+          - "Dovecot status: {{ dovecot_status.status.ActiveState }}"
+          - "Service is: {{ 'RUNNING ✓' if dovecot_status.status.ActiveState == 'active' else 'NOT RUNNING ✗' }}"
+
+    - name: Test Dovecot SSL
+      ansible.builtin.command:
+        cmd: openssl s_client -connect localhost:993 -servername cucho1.phalkons.com
+        stdin: "a logout\n"
+      register: ssl_test
+      changed_when: false
+      failed_when: false
+      timeout: 5
+
+    - name: Display SSL test result
+      ansible.builtin.debug:
+        msg: "{{ 'SSL connection successful' if ssl_test.rc == 0 else 'SSL connection failed - check logs' }}"
+
+    - name: Test authentication
+      ansible.builtin.command:
+        cmd: doveadm auth test testuser1@phalkons.com TestPass123!
+      register: auth_test
+      changed_when: false
+      failed_when: false
+
+    - name: Display auth test result
+      ansible.builtin.debug:
+        msg: "{{ auth_test.stdout_lines }}"
+
+    - name: Summary
+      ansible.builtin.debug:
+        msg:
+          - "========================================"
+          - "Dovecot SSL Configuration Fix Complete"
+          - "========================================"
+          - ""
+          - "Status: {{ 'SUCCESS ✓' if dovecot_status.status.ActiveState == 'active' else 'FAILED ✗' }}"
+          - ""
+          - "SSL Certificate: /etc/letsencrypt/live/cucho1.phalkons.com/fullchain.pem"
+          - "Private Key: /etc/letsencrypt/live/cucho1.phalkons.com/privkey.pem"
+          - ""
+          - "Next: Retry Task 2.2.5"
+          - "  ./run_task.sh 2.2.5"

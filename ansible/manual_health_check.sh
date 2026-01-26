@@ -1,0 +1,51 @@
+#!/bin/bash
+# Manual test script - run on server
+
+echo "=========================================="
+echo "Mail Server Health Check"
+echo "=========================================="
+echo ""
+
+echo "1. Service Status:"
+echo "-------------------"
+systemctl is-active postfix && echo "  Postfix:  ✓ RUNNING" || echo "  Postfix:  ✗ STOPPED"
+systemctl is-active dovecot && echo "  Dovecot:  ✓ RUNNING" || echo "  Dovecot:  ✗ STOPPED"
+systemctl is-active opendkim && echo "  OpenDKIM: ✓ RUNNING" || echo "  OpenDKIM:  ✗ STOPPED"
+docker ps | grep postgres > /dev/null && echo "  PostgreSQL: ✓ RUNNING" || echo "  PostgreSQL: ✗ STOPPED"
+echo ""
+
+echo "2. Port Status:"
+echo "---------------"
+ss -tlnp | grep ":25 " > /dev/null && echo "  SMTP (25):       ✓ LISTENING" || echo "  SMTP (25):       ✗ NOT LISTENING"
+ss -tlnp | grep ":587 " > /dev/null && echo "  Submission (587): ✓ LISTENING" || echo "  Submission (587): ✗ NOT LISTENING"
+ss -tlnp | grep ":993 " > /dev/null && echo "  IMAPS (993):     ✓ LISTENING" || echo "  IMAPS (993):     ✗ NOT LISTENING"
+ss -tlnp | grep ":5432 " > /dev/null && echo "  PostgreSQL (5432): ✓ LISTENING" || echo "  PostgreSQL (5432): ✗ NOT LISTENING"
+echo ""
+
+echo "3. Database Test:"
+echo "-----------------"
+docker exec mailserver-postgres psql -U postgres -d mailserver -c "SELECT COUNT(*) as domains FROM domain;" 2>/dev/null && echo "  Database: ✓ OK" || echo "  Database: ✗ FAILED"
+echo ""
+
+echo "4. SSL Certificates:"
+echo "--------------------"
+[ -f /etc/letsencrypt/live/cucho1.phalkons.com/fullchain.pem ] && echo "  Certificate: ✓ EXISTS" || echo "  Certificate: ✗ MISSING"
+openssl x509 -in /etc/letsencrypt/live/cucho1.phalkons.com/cert.pem -noout -dates 2>/dev/null | grep "notAfter" | cut -d= -f2 | xargs echo "  Expires:"
+echo ""
+
+echo "5. Authentication Test:"
+echo "-----------------------"
+doveadm auth test testuser1@phalkons.com TestPass123! 2>&1 | grep -q "auth succeeded" && echo "  Auth: ✓ SUCCESS" || echo "  Auth: ✗ FAILED"
+echo ""
+
+echo "=========================================="
+echo "Summary"
+echo "=========================================="
+echo "Mail server components installed and configured."
+echo ""
+echo "Next steps:"
+echo "  1. Add DNS records (DKIM, SPF, DMARC)"
+echo "     cat /root/dns_records.txt"
+echo "  2. Test sending email"
+echo "  3. Configure email client"
+echo "=========================================="
