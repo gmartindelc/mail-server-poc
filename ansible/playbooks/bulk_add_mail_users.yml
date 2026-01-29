@@ -1,0 +1,66 @@
+---
+# Playbook: Bulk Add Email Users from CSV
+# Usage: ansible-playbook playbooks/bulk_add_mail_users.yml -e "csv_file=/path/to/users.csv"
+#
+# CSV Format (no header row):
+# email,password,full_name
+# john@phalkons.com,SecurePass123,John Doe
+# jane@phalkons.com,AnotherPass456,Jane Smith
+
+- name: Bulk Add Email Users from CSV
+  hosts: mail_server
+  become: yes
+  
+  vars:
+    csv_file_path: "{{ csv_file | default(playbook_dir + '/../users.csv') }}"
+  
+  tasks:
+    - name: Check if CSV file exists locally
+      ansible.builtin.stat:
+        path: "{{ csv_file_path }}"
+      register: csv_local
+      delegate_to: localhost
+      become: no
+
+    - name: Fail if CSV file doesn't exist
+      ansible.builtin.fail:
+        msg: "CSV file not found: {{ csv_file_path }}"
+      when: not csv_local.stat.exists
+
+    - name: Read CSV file
+      ansible.builtin.slurp:
+        src: "{{ csv_file_path }}"
+      register: csv_content
+      delegate_to: localhost
+      become: no
+
+    - name: Parse CSV content
+      ansible.builtin.set_fact:
+        csv_lines: "{{ (csv_content.content | b64decode).split('\n') | select | list }}"
+
+    - name: Display number of users to add
+      ansible.builtin.debug:
+        msg: "Found {{ csv_lines | length }} user(s) in CSV file"
+
+    - name: Process each user
+      include_tasks: add_single_user.yml
+      loop: "{{ csv_lines }}"
+      loop_control:
+        loop_var: csv_line
+        label: "{{ csv_line.split(',')[0] | default('invalid') }}"
+
+    - name: Display completion summary
+      ansible.builtin.debug:
+        msg:
+          - "=========================================="
+          - "Bulk User Creation Complete"
+          - "=========================================="
+          - "Total users processed: {{ csv_lines | length }}"
+          - "Successful: {{ users_added | default([]) | length }}"
+          - "Failed: {{ users_failed | default([]) | length }}"
+          - ""
+          - "Successfully added:"
+          - "{% for user in users_added | default([]) %}  - {{ user }}\n{% endfor %}"
+          - ""
+          - "{% if users_failed | default([]) | length > 0 %}Failed to add:\n{% for user in users_failed | default([]) %}  - {{ user }}\n{% endfor %}{% endif %}"
+          - "=========================================="

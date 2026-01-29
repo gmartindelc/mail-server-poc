@@ -1,177 +1,88 @@
 ---
-# Reusable Playbook: Install and Configure Dovecot IMAP for Debian 13
-# 
-# Purpose: Deploy Dovecot 2.4 for IMAP access with PostgreSQL authentication
-# IMPORTANT: This configuration is specific for Dovecot 2.4 on Debian 13
-# 
-# Key Changes for Dovecot 2.4:
-# 1. Install dovecot-pgsql package (NOT installed by default!)
-# 2. Named sections required: passdb sql {}, userdb sql {}
-# 3. No external dovecot-sql.conf.ext - SQL config goes inline
-# 4. Comment out auth_username_format = %u in 10-auth.conf
-# 5. Use %{user} variable syntax instead of %u
-#
-# ENHANCEMENTS:
-# - Pre-flight validation for Dovecot 2.4
-# - Improved idempotency checks
-# - Standardized password retrieval
-# - Better configuration validation
-# - Rollback capability
+# Install and Configure Dovecot IMAP/LMTP Server
+# Corrected for Dovecot 2.4 on Debian 13
 
-- name: Pre-flight - Validate OS and Dovecot version requirements
-  ansible.builtin.assert:
-    that:
-      - ansible_distribution == "Debian"
-      - ansible_distribution_major_version | int >= 13
-    fail_msg: "This playbook is specifically for Debian 13+ with Dovecot 2.4"
-    success_msg: "OS validation passed: {{ ansible_distribution }} {{ ansible_distribution_version }}"
-
-- name: Pre-flight - Check if Dovecot is already configured
-  ansible.builtin.stat:
-    path: /etc/dovecot/dovecot.conf.ansible_managed
-  register: dovecot_configured
-
-- name: Display configuration status
-  ansible.builtin.debug:
-    msg: "Dovecot configuration status: {{ 'Already configured' if dovecot_configured.stat.exists else 'New installation' }}"
-
-- name: Install Dovecot and dependencies (MUST include dovecot-pgsql)
+- name: Install Dovecot and PostgreSQL driver
   ansible.builtin.apt:
     name:
       - dovecot-core
       - dovecot-imapd
-      - dovecot-pop3d
-      - dovecot-pgsql          # CRITICAL: Not installed by default on Debian 13
       - dovecot-lmtpd
-      - python3
+      - dovecot-pgsql  # CRITICAL: Required for SQL authentication
     state: present
     update_cache: yes
 
-- name: Verify dovecot-pgsql package is installed
-  ansible.builtin.command:
-    cmd: dpkg -l dovecot-pgsql
-  register: pgsql_check
-  changed_when: false
-  failed_when: pgsql_check.rc != 0
+- name: Ensure vmail user exists (for virtual mailboxes)
+  ansible.builtin.user:
+    name: vmail
+    uid: "{{ vmail_uid }}"
+    group: vmail
+    shell: /usr/sbin/nologin
+    home: "{{ mail_vmail_dir }}"
+    create_home: no
+    system: yes
+    state: present
 
-- name: Display dovecot-pgsql installation status
-  ansible.builtin.debug:
-    msg: "✓ CRITICAL: dovecot-pgsql package is installed (required for Debian 13)"
+- name: Ensure vmail group exists
+  ansible.builtin.group:
+    name: vmail
+    gid: "{{ vmail_gid }}"
+    system: yes
+    state: present
 
-- name: Stop Dovecot for configuration
-  ansible.builtin.systemd:
-    name: dovecot
-    state: stopped
+- name: Backup default Dovecot configuration
+  ansible.builtin.copy:
+    src: /etc/dovecot/dovecot.conf
+    dest: /etc/dovecot/dovecot.conf.backup-original
+    remote_src: yes
+    force: no
 
-- name: Generate new password for Dovecot database user
-  ansible.builtin.shell: openssl rand -base64 24 | tr -d '/+=' | head -c 32
-  register: dovecot_db_password_new
-  changed_when: false
-  no_log: true
+# DOVECOT 2.4 CRITICAL FIX: Comment out conflicting mail settings
+- name: Comment out conflicting mail settings in 10-mail.conf
+  ansible.builtin.lineinfile:
+    path: /etc/dovecot/conf.d/10-mail.conf
+    regexp: "{{ item }}"
+    state: absent
+  loop:
+    - '^mail_driver = mbox'
+    - '^mail_home = '
+    - '^mail_inbox_path = '
+    - '^mail_path = '
 
-- name: Update Dovecot database user password
-  ansible.builtin.shell: |
-    docker exec {{ postgres_container_name }} \
-      psql -U {{ postgres_admin_user }} -c \
-      "ALTER USER {{ postgres_dovecot_user }} WITH ENCRYPTED PASSWORD '{{ dovecot_db_password_new.stdout }}';"
-  register: password_update
-  changed_when: true
-  no_log: true
+# DOVECOT 2.4 CRITICAL FIX: Remove auth_username_format from LMTP
+- name: Remove auth_username_format from LMTP configuration
+  ansible.builtin.lineinfile:
+    path: /etc/dovecot/conf.d/20-lmtp.conf
+    regexp: '^\s*auth_username_format = '
+    state: absent
 
-- name: Set password variable
-  ansible.builtin.set_fact:
-    dovecot_db_password: "{{ dovecot_db_password_new.stdout }}"
-  no_log: true
-
-- name: Verify password was set
-  ansible.builtin.assert:
-    that:
-      - dovecot_db_password is defined
-      - dovecot_db_password != ""
-      - dovecot_db_password | length > 8
-    fail_msg: "Failed to set valid Dovecot password"
-    success_msg: "Dovecot database credentials configured successfully"
-
-- name: Configure dovecot.conf - Basic settings
+- name: Configure Dovecot main settings
   ansible.builtin.blockinfile:
     path: /etc/dovecot/dovecot.conf
     marker: "# {mark} ANSIBLE MANAGED - Basic Settings"
     block: |
-      protocols = imap lmtp
+      protocols = {{ dovecot_protocols }}
       listen = *
-    state: present
+      
+      # DOVECOT 2.4: mail_driver must be set explicitly
+      mail_driver = maildir
+    create: no
 
-- name: Backup original 10-mail.conf (if not already backed up)
-  ansible.builtin.copy:
-    src: /etc/dovecot/conf.d/10-mail.conf
-    dest: /etc/dovecot/conf.d/10-mail.conf.backup
-    remote_src: yes
-    force: no
+- name: Retrieve PostgreSQL password for dovecot_user
+  ansible.builtin.slurp:
+    src: "{{ postgres_credentials_file }}"
+  register: postgres_credentials
 
-- name: Configure 10-mail.conf - Mailbox location
-  ansible.builtin.replace:
-    path: /etc/dovecot/conf.d/10-mail.conf
-    regexp: "{{ item.regexp }}"
-    replace: "{{ item.replace }}"
-  loop:
-    - { regexp: '^#?mail_location =.*', replace: 'mail_location = {{ dovecot_mail_location }}' }
-    - { regexp: '^#?mail_privileged_group =.*', replace: 'mail_privileged_group = vmail' }
-    - { regexp: '^#?first_valid_uid =.*', replace: 'first_valid_uid = {{ vmail_uid }}' }
-    - { regexp: '^#?first_valid_gid =.*', replace: 'first_valid_gid = {{ vmail_gid }}' }
+- name: Extract dovecot_user password
+  ansible.builtin.set_fact:
+    dovecot_db_password: "{{ postgres_credentials.content | b64decode | regex_search('dovecot_user: (.+)', '\\1') | first }}"
 
-- name: Backup original 10-auth.conf (if not already backed up)
-  ansible.builtin.copy:
-    src: /etc/dovecot/conf.d/10-auth.conf
-    dest: /etc/dovecot/conf.d/10-auth.conf.backup
-    remote_src: yes
-    force: no
-
-- name: Check if auth_username_format is already commented
-  ansible.builtin.command:
-    cmd: grep "^#auth_username_format" /etc/dovecot/conf.d/10-auth.conf
-  register: auth_format_check
-  failed_when: false
-  changed_when: false
-
-- name: Comment out auth_username_format line (CRITICAL for Dovecot 2.4)
-  ansible.builtin.replace:
-    path: /etc/dovecot/conf.d/10-auth.conf
-    regexp: '^auth_username_format = %u'
-    replace: '#auth_username_format = %u  # COMMENTED OUT for Dovecot 2.4 compatibility'
-    backup: yes
-  when: auth_format_check.rc != 0
-
-- name: Display auth_username_format status
-  ansible.builtin.debug:
-    msg: "auth_username_format: {{ 'Already commented out' if auth_format_check.rc == 0 else 'Commented out now' }}"
-
-- name: Configure 10-auth.conf - Authentication basics
-  ansible.builtin.replace:
-    path: /etc/dovecot/conf.d/10-auth.conf
-    regexp: "{{ item.regexp }}"
-    replace: "{{ item.replace }}"
-  loop:
-    - { regexp: '^#?disable_plaintext_auth =.*', replace: 'disable_plaintext_auth = yes' }
-    - { regexp: '^#?auth_mechanisms =.*', replace: 'auth_mechanisms = plain login' }
-    - { regexp: '^!include auth-system.conf.ext', replace: '#!include auth-system.conf.ext' }
-
-- name: Remove obsolete dovecot-sql.conf.ext file (not used in Dovecot 2.4)
-  ansible.builtin.file:
-    path: /etc/dovecot/dovecot-sql.conf.ext
-    state: absent
-
-- name: Remove auth-sql.conf.ext (not needed - config goes in 10-auth.conf)
-  ansible.builtin.file:
-    path: /etc/dovecot/conf.d/auth-sql.conf.ext
-    state: absent
-
-- name: Configure SQL authentication directly in 10-auth.conf (Dovecot 2.4 style)
+- name: Configure Dovecot SQL authentication (Dovecot 2.4 format)
   ansible.builtin.blockinfile:
     path: /etc/dovecot/conf.d/10-auth.conf
     marker: "# {mark} ANSIBLE MANAGED - SQL Authentication"
-    insertafter: EOF
     block: |
-      # SQL Configuration for Dovecot 2.4 - INLINE (no external files)
+      # SQL driver configuration for Dovecot 2.4
       sql_driver = pgsql
       
       pgsql localhost {
@@ -183,244 +94,173 @@
         }
       }
       
+      # Password scheme
       passdb_default_password_scheme = SHA512-CRYPT
       
+      # Enable SQL authentication
+      !include auth-sql.conf.ext
+    create: no
+
+- name: Configure Dovecot SQL queries (auth-sql.conf.ext)
+  ansible.builtin.copy:
+    dest: /etc/dovecot/conf.d/auth-sql.conf.ext
+    content: |
+      # Authentication for SQL users - Dovecot 2.4
+      # CRITICAL: Uses new variable syntax %{user} instead of %u
+      
       passdb sql {
-        query = SELECT username AS user, password FROM mailbox WHERE username = '%{user}' AND active = true
+        query = SELECT username AS user, password FROM {{ postgres_table_mailbox }} WHERE username = '%{user}' AND active = true
       }
       
       userdb sql {
-        query = SELECT 'maildir:{{ mail_vmail_dir }}/' || maildir AS mail, {{ vmail_uid }} AS uid, {{ vmail_gid }} AS gid FROM mailbox WHERE username = '%{user}' AND active = true
-        iterate_query = SELECT username AS user FROM mailbox WHERE active = true
+        # CRITICAL: Must return 'mail' not 'maildir'
+        # CRITICAL: Must include 'home' field for Dovecot 2.4
+        query = SELECT 'maildir:{{ mail_vmail_dir }}/' || maildir AS mail, {{ vmail_uid }} AS uid, {{ vmail_gid }} AS gid, '{{ mail_vmail_dir }}/' || maildir AS home FROM {{ postgres_table_mailbox }} WHERE username = '%{user}' AND active = true
+        
+        iterate_query = SELECT username AS user FROM {{ postgres_table_mailbox }} WHERE active = true
       }
-    state: present
-  no_log: true
+    owner: root
+    group: root
+    mode: '0644'
 
-- name: Remove dovecot-sql.conf.ext (not needed with inline config)
-  ansible.builtin.file:
-    path: /etc/dovecot/dovecot-sql.conf.ext
-    state: absent
-
-- name: Disable auth-sql.conf.ext include (using inline config instead)
-  ansible.builtin.replace:
-    path: /etc/dovecot/conf.d/10-auth.conf
-    regexp: '^(!include auth-sql.conf.ext)'
-    replace: '#!include auth-sql.conf.ext'
-
-- name: Backup original 10-master.conf (if not already backed up)
+- name: Configure Dovecot mailbox settings
   ansible.builtin.copy:
-    src: /etc/dovecot/conf.d/10-master.conf
-    dest: /etc/dovecot/conf.d/10-master.conf.backup
-    remote_src: yes
-    force: no
+    dest: /etc/dovecot/conf.d/15-mailboxes.conf
+    content: |
+      ##
+      ## Mailbox definitions
+      ##
+      
+      namespace inbox {
+        inbox = yes
+        
+        mailbox Drafts {
+          special_use = \Drafts
+          auto = subscribe
+        }
+        
+        mailbox Junk {
+          special_use = \Junk
+          auto = subscribe
+        }
+        
+        mailbox Trash {
+          special_use = \Trash
+          auto = subscribe
+        }
+        
+        mailbox Sent {
+          special_use = \Sent
+          auto = subscribe
+        }
+        
+        mailbox "Sent Messages" {
+          special_use = \Sent
+        }
+      }
+    owner: root
+    group: root
+    mode: '0644'
 
-- name: Ensure LMTP service block exists
+- name: Configure Dovecot LMTP service
+  ansible.builtin.copy:
+    dest: /etc/dovecot/conf.d/10-master.conf
+    content: |
+      ##
+      ## Service configuration
+      ##
+      
+      service imap-login {
+        inet_listener imap {
+          port = 143
+        }
+        inet_listener imaps {
+          port = 993
+          ssl = yes
+        }
+      }
+      
+      service lmtp {
+        unix_listener /var/spool/postfix/private/dovecot-lmtp {
+          mode = 0600
+          user = postfix
+          group = postfix
+        }
+      }
+      
+      service auth {
+        unix_listener auth-userdb {
+          mode = 0600
+          user = vmail
+          group = vmail
+        }
+        
+        unix_listener /var/spool/postfix/private/auth {
+          mode = 0660
+          user = postfix
+          group = postfix
+        }
+      }
+    owner: root
+    group: root
+    mode: '0644'
+
+- name: Configure mail privileges
   ansible.builtin.lineinfile:
-    path: /etc/dovecot/conf.d/10-master.conf
-    regexp: '^service lmtp \{'
-    line: 'service lmtp {'
-    state: present
-    insertbefore: '^service'
+    path: /etc/dovecot/conf.d/10-mail.conf
+    regexp: '^#?mail_privileged_group'
+    line: 'mail_privileged_group = vmail'
+    create: yes
 
-- name: Configure 10-master.conf - LMTP service for Postfix
-  ansible.builtin.blockinfile:
-    path: /etc/dovecot/conf.d/10-master.conf
-    marker: "  # {mark} ANSIBLE MANAGED - LMTP Service"
-    insertafter: 'service lmtp {'
-    block: |
-      unix_listener /var/spool/postfix/private/dovecot-lmtp {
-        mode = 0600
-        user = postfix
-        group = postfix
-      }
+- name: Ensure Postfix spool directory exists
+  ansible.builtin.file:
+    path: /var/spool/postfix/private
+    state: directory
+    owner: postfix
+    group: postfix
+    mode: '0750'
 
-- name: Configure 10-master.conf - Auth service
-  ansible.builtin.blockinfile:
-    path: /etc/dovecot/conf.d/10-master.conf
-    marker: "  # {mark} ANSIBLE MANAGED - Auth Service"
-    insertafter: 'service auth {'
-    block: |
-      unix_listener auth-userdb {
-        mode = 0600
-        user = vmail
-        group = vmail
-      }
-
-      # Auth socket for Postfix SASL
-      unix_listener /var/spool/postfix/private/auth {
-        mode = 0660
-        user = postfix
-        group = postfix
-      }
-
-- name: Backup original 10-ssl.conf (if not already backed up)
-  ansible.builtin.copy:
-    src: /etc/dovecot/conf.d/10-ssl.conf
-    dest: /etc/dovecot/conf.d/10-ssl.conf.backup
-    remote_src: yes
-    force: no
-
-- name: Configure 10-ssl.conf - SSL settings
-  ansible.builtin.replace:
-    path: /etc/dovecot/conf.d/10-ssl.conf
-    regexp: "{{ item.regexp }}"
-    replace: "{{ item.replace }}"
-  loop:
-    - { regexp: '^#?ssl =.*', replace: 'ssl = required' }
-    - { regexp: '^#?ssl_cert =.*', replace: 'ssl_cert = <{{ ssl_cert_path }}' }
-    - { regexp: '^#?ssl_key =.*', replace: 'ssl_key = <{{ ssl_key_path }}' }
-
-- name: Ensure mail directory structure exists
+- name: Set correct permissions on vmail directory
   ansible.builtin.file:
     path: "{{ mail_vmail_dir }}"
-    state: directory
     owner: vmail
     group: vmail
     mode: '0750'
+    state: directory
+    recurse: yes
 
-- name: Create configuration marker file
-  ansible.builtin.copy:
-    dest: /etc/dovecot/dovecot.conf.ansible_managed
-    content: |
-      # This file indicates Dovecot was configured by Ansible
-      # Configuration date: {{ ansible_date_time.iso8601 }}
-      # Playbook: install_dovecot.yml
-      # Dovecot 2.4 specific configuration applied
-    mode: '0644'
-
-- name: Test Dovecot configuration syntax
-  ansible.builtin.command:
-    cmd: doveconf -n
-  register: dovecot_check
-  changed_when: false
-  failed_when: false
-
-- name: Display configuration check result
-  ansible.builtin.debug:
-    msg: "{{ dovecot_check.stderr if dovecot_check.stderr else 'Configuration syntax OK' }}"
-
-- name: Fail if configuration has errors
-  ansible.builtin.fail:
-    msg: "Dovecot configuration has errors: {{ dovecot_check.stderr }}"
-  when: dovecot_check.rc != 0
-
-- name: Start and enable Dovecot
+- name: Enable and start Dovecot service
   ansible.builtin.systemd:
     name: dovecot
-    state: started
     enabled: yes
-  register: dovecot_start
-  failed_when: false
+    state: started
+  register: dovecot_service
 
-- name: Check Dovecot service status if start failed
-  ansible.builtin.command:
-    cmd: journalctl -u dovecot -n 50 --no-pager
-  register: dovecot_logs
-  when: dovecot_start.failed is defined and dovecot_start.failed
-  changed_when: false
-
-- name: Display Dovecot error logs
-  ansible.builtin.debug:
-    msg: "{{ dovecot_logs.stdout_lines }}"
-  when: dovecot_start.failed is defined and dovecot_start.failed
-
-- name: Wait for Dovecot to start
+- name: Wait for Dovecot to be ready
   ansible.builtin.wait_for:
     port: 993
     delay: 2
-    timeout: 10
+    timeout: 30
 
-- name: Test Dovecot authentication with test user
+- name: Verify Dovecot configuration
   ansible.builtin.command:
-    cmd: doveadm auth test {{ mail_test_email }} {{ mail_test_password }}
-  register: auth_test
+    cmd: doveconf -n
+  register: dovecot_config_check
   changed_when: false
-  failed_when: false
-  retries: 3
-  delay: 2
-  until: auth_test.rc == 0 or auth_test.attempts >= 3
 
-- name: Display authentication test result
-  ansible.builtin.debug:
-    msg: "Auth test for {{ mail_test_email }}: {{ 'SUCCESS' if auth_test.rc == 0 else 'FAILED - ' ~ auth_test.stderr }}"
-
-- name: Test IMAP connection
-  ansible.builtin.command:
-    cmd: |
-      timeout 5 openssl s_client -connect localhost:143 -starttls imap -quiet 2>/dev/null <<EOF
-      a login {{ mail_test_email }} {{ mail_test_password }}
-      b logout
-      EOF
-  register: imap_test
-  changed_when: false
-  failed_when: false
-
-- name: Display IMAP test result
-  ansible.builtin.debug:
-    msg: "IMAP connection test: {{ 'SUCCESS' if 'OK Logged in' in imap_test.stdout else 'FAILED' }}"
-
-- name: Check listening ports
-  ansible.builtin.shell:
-    cmd: ss -tlnp | grep dovecot
-  register: dovecot_ports
-  changed_when: false
-  failed_when: false
-
-- name: Display Dovecot listening ports
-  ansible.builtin.debug:
-    msg: "Dovecot listening on: {{ dovecot_ports.stdout_lines }}"
-
-- name: Display completion summary
+- name: Display Dovecot configuration summary
   ansible.builtin.debug:
     msg:
-      - "=========================================="
-      - "Dovecot 2.4 Installation Complete (Debian 13)"
-      - "=========================================="
+      - "Dovecot installation complete"
+      - "Protocols: {{ dovecot_protocols }}"
+      - "Mail driver: maildir"
+      - "Service status: {{ 'Running' if dovecot_service.status.ActiveState == 'active' else 'Check manually' }}"
       - ""
-      - "✓ Dovecot 2.4 installed with PostgreSQL support"
-      - "✓ CRITICAL: dovecot-pgsql package installed"
-      - "✓ SQL authentication configured for Dovecot 2.4"
-      - "✓ Named sections: passdb sql {}, userdb sql {}"
-      - "✓ Commented out: auth_username_format = %u"
-      - "✓ Maildir format configured"
-      - "✓ LMTP service configured for Postfix integration"
-      - "✓ SSL enabled (self-signed certificate)"
-      - "✓ Authentication test: {{ 'SUCCESS' if auth_test.rc == 0 else 'FAILED' }}"
+      - "IMPORTANT: Dovecot 2.4 specific configuration:"
+      - "  - SQL driver: pgsql (inline configuration)"
+      - "  - Variable syntax: %{user} not %u"
+      - "  - userdb returns: mail (not maildir) + home field"
+      - "  - auth_username_format: removed from LMTP"
+      - "  - mail_driver: explicitly set to maildir"
       - ""
-      - "Configuration Files:"
-      - "  /etc/dovecot/conf.d/10-auth.conf - SQL auth included"
-      - "  /etc/dovecot/conf.d/auth-sql.conf.ext - Inline SQL config"
-      - "  /etc/dovecot/conf.d/10-mail.conf - Maildir location"
-      - "  /etc/dovecot/conf.d/10-master.conf - LMTP service"
-      - "  /etc/dovecot/conf.d/10-ssl.conf - SSL settings"
-      - ""
-      - "Backups created:"
-      - "  /etc/dovecot/conf.d/10-auth.conf.backup"
-      - "  /etc/dovecot/conf.d/10-mail.conf.backup"
-      - "  /etc/dovecot/conf.d/10-master.conf.backup"
-      - "  /etc/dovecot/conf.d/10-ssl.conf.backup"
-      - ""
-      - "Important Dovecot 2.4 Changes Applied:"
-      - "  1. Installed dovecot-pgsql (not default on Debian 13)"
-      - "  2. Named sections: passdb sql {}, userdb sql {}"
-      - "  3. SQL connection inline (no external dovecot-sql.conf.ext)"
-      - "  4. Commented out auth_username_format = %u"
-      - "  5. User query returns 'mail' field with full path"
-      - "  6. Variable syntax: %{user} not %u"
-      - ""
-      - "Test Commands:"
-      - "  sudo doveadm auth test {{ mail_test_email }} {{ mail_test_password }}"
-      - "  sudo systemctl status dovecot"
-      - "  sudo ss -tlnp | grep dovecot"
-      - "  sudo journalctl -u dovecot -n 20"
-      - ""
-      - "Common Issues Fixed:"
-      - "  ✓ 'passdb { } is missing section name' - Named sections used"
-      - "  ✓ 'args: Unknown setting' - Inline SQL config"
-      - "  ✓ 'Invalid maildir=...' - Returns 'mail' not 'maildir'"
-      - "  ✓ 'sql_driver setting is empty' - sql_driver = pgsql set"
-      - ""
-      - "Rollback: ansible-playbook rollback_dovecot.yml"
-      - ""
-      - "Next: Configure Postfix SASL authentication with Dovecot"
-      - "=========================================="
+      - "Mailbox location: {{ mail_vmail_dir }}/domain/user/Maildir/"

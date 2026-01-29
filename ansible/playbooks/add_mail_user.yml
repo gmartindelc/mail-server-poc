@@ -1,0 +1,147 @@
+---
+# Task file: Add single user from CSV line
+# Called by bulk_add_mail_users.yml
+
+- name: Parse CSV line
+  ansible.builtin.set_fact:
+    user_email: "{{ csv_line.split(',')[0] | trim }}"
+    user_password: "{{ csv_line.split(',')[1] | trim }}"
+    user_name: "{{ csv_line.split(',')[2] | default('') | trim }}"
+
+- name: Validate email format
+  ansible.builtin.set_fact:
+    email_valid: "{{ user_email is match('^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,}$') }}"
+
+- name: Skip invalid email
+  ansible.builtin.debug:
+    msg: "Skipping invalid email: {{ user_email }}"
+  when: not email_valid
+
+- name: Process valid email
+  block:
+    - name: Extract local part and domain
+      ansible.builtin.set_fact:
+        local_part: "{{ user_email.split('@')[0] }}"
+        domain: "{{ user_email.split('@')[1] }}"
+
+    - name: Generate password hash
+      ansible.builtin.command:
+        cmd: "doveadm pw -s SHA512-CRYPT -p {{ user_password }}"
+      register: password_hash
+      changed_when: false
+      no_log: true
+
+    - name: Check if domain exists
+      ansible.builtin.command:
+        cmd: >
+          docker exec mailserver-postgres psql -U postgres -d mailserver
+          -tAc "SELECT domain FROM domain WHERE domain='{{ domain }}' AND active=true"
+      register: domain_check
+      changed_when: false
+      failed_when: false
+
+    - name: Skip if domain doesn't exist
+      ansible.builtin.debug:
+        msg: "Skipping {{ user_email }} - domain {{ domain }} not found"
+      when: domain_check.stdout == ""
+
+    - name: Check if user already exists
+      ansible.builtin.command:
+        cmd: >
+          docker exec mailserver-postgres psql -U postgres -d mailserver
+          -tAc "SELECT username FROM mailbox WHERE username='{{ user_email }}'"
+      register: user_check
+      changed_when: false
+      failed_when: false
+      when: domain_check.stdout != ""
+
+    - name: Skip if user exists
+      ansible.builtin.debug:
+        msg: "Skipping {{ user_email }} - user already exists"
+      when: 
+        - domain_check.stdout != ""
+        - user_check.stdout != ""
+
+    - name: Add user to database
+      ansible.builtin.shell:
+        cmd: |
+          docker exec -i mailserver-postgres psql -U postgres -d mailserver << 'EOSQL'
+          INSERT INTO mailbox (username, password, name, maildir, quota, active)
+          VALUES ('{{ user_email }}', '{{ password_hash.stdout }}', '{{ user_name }}', '{{ domain }}/{{ local_part }}/', 0, true);
+          EOSQL
+      register: add_user
+      changed_when: true
+      no_log: true
+      when:
+        - domain_check.stdout != ""
+        - user_check.stdout == ""
+
+    - name: Create user mailbox directory
+      ansible.builtin.file:
+        path: "{{ mail_vmail_dir }}/{{ domain }}/{{ local_part }}/Maildir"
+        state: directory
+        owner: vmail
+        group: vmail
+        mode: '0750'
+        recurse: yes
+      when:
+        - domain_check.stdout != ""
+        - user_check.stdout == ""
+        - add_user is changed
+
+    - name: Create Maildir subdirectories
+      ansible.builtin.file:
+        path: "{{ mail_vmail_dir }}/{{ domain }}/{{ local_part }}/Maildir/{{ item }}"
+        state: directory
+        owner: vmail
+        group: vmail
+        mode: '0750'
+      loop:
+        - new
+        - cur
+        - tmp
+      when:
+        - domain_check.stdout != ""
+        - user_check.stdout == ""
+        - add_user is changed
+
+    - name: Test authentication
+      ansible.builtin.shell:
+        cmd: |
+          doveadm auth test "{{ user_email }}" "{{ user_password }}"
+      register: auth_test
+      changed_when: false
+      failed_when: false
+      no_log: true
+      when:
+        - domain_check.stdout != ""
+        - user_check.stdout == ""
+        - add_user is changed
+
+    - name: Track successful addition
+      ansible.builtin.set_fact:
+        users_added: "{{ users_added | default([]) + [user_email] }}"
+      when:
+        - domain_check.stdout != ""
+        - user_check.stdout == ""
+        - add_user is changed
+        - "'auth succeeded' in auth_test.stdout"
+
+    - name: Track failed addition
+      ansible.builtin.set_fact:
+        users_failed: "{{ users_failed | default([]) + [user_email] }}"
+      when:
+        - domain_check.stdout != ""
+        - user_check.stdout == ""
+        - add_user is changed
+        - "'auth succeeded' not in auth_test.stdout"
+
+  when: email_valid
+  rescue:
+    - name: Track failed user on error
+      ansible.builtin.set_fact:
+        users_failed: "{{ users_failed | default([]) + [user_email + ' (error)'] }}"
+
+    - name: Display error
+      ansible.builtin.debug:
+        msg: "Error adding user {{ user_email }}: {{ ansible_failed_result.msg | default('Unknown error') }}"
